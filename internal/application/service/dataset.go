@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
+	"sort"
 
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -12,11 +14,18 @@ import (
 )
 
 // DatasetService provides operations for working with datasets
-type DatasetService struct{}
+type DatasetService struct {
+	datasetRoot string
+}
 
 // NewDatasetService creates a new DatasetService instance
 func NewDatasetService() interfaces.DatasetService {
-	return &DatasetService{}
+	return &DatasetService{datasetRoot: "./dataset"}
+}
+
+var datasetDirectories = map[string]string{
+	"default":      "samples",
+	"benchmark_v1": "benchmark_v1",
 }
 
 // TextInfo represents text data with ID in parquet format
@@ -42,7 +51,19 @@ func (d *DatasetService) GetDatasetByID(ctx context.Context, datasetID string) (
 	logger.Info(ctx, "Start getting dataset by ID")
 	logger.Infof(ctx, "Getting dataset with ID: %s", datasetID)
 
-	dataset := DefaultDataset()
+	directory, ok := datasetDirectories[datasetID]
+	if !ok {
+		return nil, fmt.Errorf("unsupported dataset ID %q", datasetID)
+	}
+
+	root := d.datasetRoot
+	if root == "" {
+		root = "./dataset"
+	}
+	dataset, err := loadDataset(filepath.Join(root, directory))
+	if err != nil {
+		return nil, fmt.Errorf("load dataset %q: %w", datasetID, err)
+	}
 	dataset.PrintStats(ctx)
 	qaPairs := dataset.Iterate()
 
@@ -52,26 +73,33 @@ func (d *DatasetService) GetDatasetByID(ctx context.Context, datasetID string) (
 
 // DefaultDataset loads and initializes the default dataset from parquet files
 func DefaultDataset() dataset {
-	datasetDir := "./dataset/samples"
-	queries, err := loadParquet[TextInfo](fmt.Sprintf("%s/queries.parquet", datasetDir))
+	dataset, err := loadDataset(filepath.Join("dataset", datasetDirectories["default"]))
 	if err != nil {
 		panic(err)
+	}
+	return dataset
+}
+
+func loadDataset(datasetDir string) (dataset, error) {
+	queries, err := loadParquet[TextInfo](fmt.Sprintf("%s/queries.parquet", datasetDir))
+	if err != nil {
+		return dataset{}, fmt.Errorf("load queries: %w", err)
 	}
 	corpus, err := loadParquet[TextInfo](fmt.Sprintf("%s/corpus.parquet", datasetDir))
 	if err != nil {
-		panic(err)
+		return dataset{}, fmt.Errorf("load corpus: %w", err)
 	}
 	answers, err := loadParquet[TextInfo](fmt.Sprintf("%s/answers.parquet", datasetDir))
 	if err != nil {
-		panic(err)
+		return dataset{}, fmt.Errorf("load answers: %w", err)
 	}
 	qrels, err := loadParquet[RelsInfo](fmt.Sprintf("%s/qrels.parquet", datasetDir))
 	if err != nil {
-		panic(err)
+		return dataset{}, fmt.Errorf("load qrels: %w", err)
 	}
 	qas, err := loadParquet[QaInfo](fmt.Sprintf("%s/qas.parquet", datasetDir))
 	if err != nil {
-		panic(err)
+		return dataset{}, fmt.Errorf("load qas: %w", err)
 	}
 
 	res := dataset{
@@ -96,7 +124,7 @@ func DefaultDataset() dataset {
 	for _, qi := range qas {
 		res.qas[qi.QID] = qi.AID
 	}
-	return res
+	return res, nil
 }
 
 // dataset represents the in-memory dataset structure
@@ -112,7 +140,14 @@ type dataset struct {
 func (d *dataset) Iterate() []*types.QAPair {
 	var pairs []*types.QAPair
 
-	for qid, question := range d.queries {
+	qids := make([]int64, 0, len(d.queries))
+	for qid := range d.queries {
+		qids = append(qids, qid)
+	}
+	sort.Slice(qids, func(i, j int) bool { return qids[i] < qids[j] })
+
+	for _, qid := range qids {
+		question := d.queries[qid]
 		// Get answer info
 		aid, hasAnswer := d.qas[qid]
 		answer := ""
