@@ -1867,7 +1867,9 @@ func (h *InitializationHandler) TestEmbeddingModel(c *gin.Context) {
 		return
 	}
 
-	vec, err := emb.Embed(ctx, "hello")
+	// A connectivity probe must always reach the provider. Serving this from
+	// embedding cache would incorrectly report an unavailable provider healthy.
+	vec, err := emb.Embed(embedding.WithEmbeddingCacheBypass(ctx), "hello")
 	if err != nil {
 		logger.Error(ctx, "Failed to call embedder", err)
 		c.JSON(http.StatusOK, gin.H{

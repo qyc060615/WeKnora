@@ -120,6 +120,7 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(initFileService))
 	must(container.Provide(initRedisClient))
 	must(container.Provide(initAntsPool))
+	must(container.Invoke(registerEmbeddingCache))
 
 	must(container.Invoke(registerLangfuseCleanup))
 
@@ -617,6 +618,25 @@ func initRedisClient() (*redis.Client, error) {
 	}
 
 	return client, nil
+}
+
+func registerEmbeddingCache(redisClient *redis.Client) {
+	cacheConfig, warnings := embedding.LoadEmbeddingCacheConfigFromEnv()
+	for _, warning := range warnings {
+		logger.Warnf(context.Background(), "[EmbeddingCache] %v", warning)
+	}
+	if !cacheConfig.Enabled {
+		embedding.ConfigureEmbeddingCache(nil, cacheConfig)
+		logger.Infof(context.Background(), "[EmbeddingCache] disabled")
+		return
+	}
+	if redisClient == nil {
+		embedding.ConfigureEmbeddingCache(nil, cacheConfig)
+		logger.Warnf(context.Background(), "[EmbeddingCache] enabled but Redis is unavailable; bypassing cache")
+		return
+	}
+	embedding.ConfigureEmbeddingCache(embedding.NewRedisEmbeddingCache(redisClient), cacheConfig)
+	logger.Infof(context.Background(), "[EmbeddingCache] enabled ttl=%s prefix=%s", cacheConfig.TTL, cacheConfig.Prefix)
 }
 
 // initDatabase initializes database connection

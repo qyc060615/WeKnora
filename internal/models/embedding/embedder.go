@@ -104,6 +104,7 @@ func NewEmbedder(config Config, pooler EmbedderPooler, ollamaService *ollama.Oll
 	if langfuse.GetManager().Enabled() {
 		e = &langfuseEmbedder{inner: e}
 	}
+	e = wrapEmbeddingCache(e, config)
 	return e, nil
 }
 
