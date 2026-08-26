@@ -2,10 +2,9 @@ package service
 
 import (
 	"context"
-	"errors"
 	"fmt"
+	"os"
 	"runtime"
-	"sync"
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/config"
@@ -26,14 +25,13 @@ arels: qid -> aid
 
 // EvaluationService handles evaluation tasks for knowledge base and chat models
 type EvaluationService struct {
-	config               *config.Config                  // Application configuration
-	dataset              interfaces.DatasetService       // Service for dataset operations
-	knowledgeBaseService interfaces.KnowledgeBaseService // Service for knowledge base operations
-	knowledgeService     interfaces.KnowledgeService     // Service for knowledge operations
-	sessionService       interfaces.SessionService       // Service for chat sessions
-	modelService         interfaces.ModelService         // Service for model operations
-
-	evaluationMemoryStorage *evaluationMemoryStorage // In-memory storage for evaluation tasks
+	config                  *config.Config                  // Application configuration
+	dataset                 interfaces.DatasetService       // Service for dataset operations
+	knowledgeBaseService    interfaces.KnowledgeBaseService // Service for knowledge base operations
+	knowledgeService        interfaces.KnowledgeService     // Service for knowledge operations
+	sessionService          interfaces.SessionService       // Service for chat sessions
+	modelService            interfaces.ModelService         // Service for model operations
+	evaluationRunRepository interfaces.EvaluationRunRepository
 }
 
 func NewEvaluationService(
@@ -43,8 +41,8 @@ func NewEvaluationService(
 	knowledgeService interfaces.KnowledgeService,
 	sessionService interfaces.SessionService,
 	modelService interfaces.ModelService,
+	evaluationRunRepository interfaces.EvaluationRunRepository,
 ) interfaces.EvaluationService {
-	evaluationMemoryStorage := newEvaluationMemoryStorage()
 	return &EvaluationService{
 		config:                  config,
 		dataset:                 dataset,
@@ -52,77 +50,26 @@ func NewEvaluationService(
 		knowledgeService:        knowledgeService,
 		sessionService:          sessionService,
 		modelService:            modelService,
-		evaluationMemoryStorage: evaluationMemoryStorage,
+		evaluationRunRepository: evaluationRunRepository,
 	}
-}
-
-// evaluationMemoryStorage stores evaluation tasks in memory with thread-safe access
-type evaluationMemoryStorage struct {
-	store map[string]*types.EvaluationDetail // Map of taskID to evaluation details
-	mu    *sync.RWMutex                      // Read-write lock for concurrent access
-}
-
-func newEvaluationMemoryStorage() *evaluationMemoryStorage {
-	res := &evaluationMemoryStorage{
-		store: make(map[string]*types.EvaluationDetail),
-		mu:    &sync.RWMutex{},
-	}
-	return res
-}
-
-func (e *evaluationMemoryStorage) register(params *types.EvaluationDetail) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	logger.Infof(context.Background(), "Registering evaluation task: %s", params.Task.ID)
-	e.store[params.Task.ID] = params
-}
-
-func (e *evaluationMemoryStorage) get(taskID string) (*types.EvaluationDetail, error) {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
-	logger.Infof(context.Background(), "Getting evaluation task: %s", taskID)
-	res, ok := e.store[taskID]
-	if !ok {
-		return nil, errors.New("task not found")
-	}
-	return res, nil
-}
-
-func (e *evaluationMemoryStorage) update(taskID string, fn func(params *types.EvaluationDetail)) error {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	params, ok := e.store[taskID]
-	if !ok {
-		return errors.New("task not found")
-	}
-	fn(params)
-	return nil
 }
 
 func (e *EvaluationService) EvaluationResult(ctx context.Context, taskID string) (*types.EvaluationDetail, error) {
 	logger.Info(ctx, "Start getting evaluation result")
 	logger.Infof(ctx, "Task ID: %s", taskID)
 
-	detail, err := e.evaluationMemoryStorage.get(taskID)
+	tenantID := types.MustTenantIDFromContext(ctx)
+	run, err := e.evaluationRunRepository.GetByTaskID(ctx, tenantID, taskID)
 	if err != nil {
 		logger.Errorf(ctx, "Failed to get evaluation task: %v", err)
 		return nil, err
 	}
-
-	tenantID := types.MustTenantIDFromContext(ctx)
-	logger.Infof(
-		ctx,
-		"Checking tenant ID match, task tenant ID: %d, current tenant ID: %d",
-		detail.Task.TenantID, tenantID,
-	)
-
-	if tenantID != detail.Task.TenantID {
-		logger.Error(ctx, "Tenant ID mismatch")
-		return nil, errors.New("tenant ID does not match")
+	if run == nil {
+		return nil, fmt.Errorf("task not found")
 	}
 
 	logger.Info(ctx, "Evaluation result retrieved successfully")
-	return detail, nil
+	return evaluationRunToDetail(run), nil
 }
 
 // Evaluation starts a new evaluation task with given parameters
@@ -140,6 +87,8 @@ func (e *EvaluationService) Evaluation(ctx context.Context,
 	// Get tenant ID from context for multi-tenancy support
 	tenantID := types.MustTenantIDFromContext(ctx)
 	logger.Infof(ctx, "Tenant ID: %d", tenantID)
+	var sourceKnowledgeBaseID *string
+	var embeddingModelID, summaryModelID string
 
 	// Handle knowledge base creation if not provided
 	if knowledgeBaseID == "" {
@@ -152,7 +101,7 @@ func (e *EvaluationService) Evaluation(ctx context.Context,
 			return nil, err
 		}
 
-		var embeddingModelID, llmModelID string
+		var llmModelID string
 		for _, model := range models {
 			if model == nil {
 				continue
@@ -168,6 +117,7 @@ func (e *EvaluationService) Evaluation(ctx context.Context,
 		if embeddingModelID == "" || llmModelID == "" {
 			return nil, fmt.Errorf("no default models found for evaluation")
 		}
+		summaryModelID = llmModelID
 
 		kb, err := e.knowledgeBaseService.CreateKnowledgeBase(ctx, &types.KnowledgeBase{
 			Name:             "evaluation",
@@ -189,6 +139,10 @@ func (e *EvaluationService) Evaluation(ctx context.Context,
 			logger.Errorf(ctx, "Failed to get knowledge base: %v", err)
 			return nil, err
 		}
+		sourceID := knowledgeBaseID
+		sourceKnowledgeBaseID = &sourceID
+		embeddingModelID = kb.EmbeddingModelID
+		summaryModelID = kb.SummaryModelID
 
 		kb, err = e.knowledgeBaseService.CreateKnowledgeBase(ctx, &types.KnowledgeBase{
 			Name:             "evaluation",
@@ -296,9 +250,29 @@ func (e *EvaluationService) Evaluation(ctx context.Context,
 		},
 	}
 
-	// Store evaluation task in memory storage
-	logger.Info(ctx, "Registering evaluation task")
-	e.evaluationMemoryStorage.register(detail)
+	retrieveDriver := os.Getenv("RETRIEVE_DRIVER")
+	if e.config.VectorDatabase != nil && e.config.VectorDatabase.Driver != "" {
+		retrieveDriver = e.config.VectorDatabase.Driver
+	}
+	snapshot := evaluationSnapshot(
+		detail, sourceKnowledgeBaseID, embeddingModelID, summaryModelID, retrieveDriver,
+	)
+	run := &types.EvaluationRun{
+		TaskID: taskID, TenantID: tenantID, DatasetID: datasetID,
+		SourceKnowledgeBaseID: sourceKnowledgeBaseID, EmbeddingModelID: embeddingModelID,
+		ChatModelID: chatModelID, Status: types.EvaluationStatuePending,
+		ConfigSnapshot: snapshot, CreatedAt: detail.Task.StartTime, UpdatedAt: detail.Task.StartTime,
+	}
+	if rerankModelID != "" {
+		rerankID := rerankModelID
+		run.RerankModelID = &rerankID
+	}
+	logger.Info(ctx, "Persisting evaluation task")
+	if err := e.evaluationRunRepository.Create(ctx, run); err != nil {
+		return nil, fmt.Errorf("create evaluation run: %w", err)
+	}
+	workerTask := *detail.Task
+	workerDetail := &types.EvaluationDetail{Task: &workerTask, Params: detail.Params.Clone()}
 
 	// Start evaluation in background goroutine
 	logger.Info(ctx, "Starting evaluation in background")
@@ -307,21 +281,42 @@ func (e *EvaluationService) Evaluation(ctx context.Context,
 		newCtx := logger.CloneContext(ctx)
 		logger.Infof(newCtx, "Background evaluation started for task ID: %s", taskID)
 
-		// Update task status to running
-		detail.Task.Status = types.EvaluationStatueRunning
+		startedAt := time.Now()
+		if err := e.evaluationRunRepository.MarkRunning(newCtx, tenantID, taskID, startedAt); err != nil {
+			logger.Errorf(newCtx, "Failed to mark evaluation task running: %v", err)
+			return
+		}
+		workerDetail.Task.Status = types.EvaluationStatueRunning
 		logger.Info(newCtx, "Evaluation task status set to running")
 
 		// Execute actual evaluation
-		if err := e.EvalDataset(newCtx, detail, knowledgeBaseID); err != nil {
-			detail.Task.Status = types.EvaluationStatueFailed
-			detail.Task.ErrMsg = err.Error()
+		if err := e.EvalDataset(newCtx, workerDetail, knowledgeBaseID); err != nil {
+			workerDetail.Task.Status = types.EvaluationStatueFailed
+			workerDetail.Task.ErrMsg = err.Error()
+			if persistErr := e.evaluationRunRepository.MarkFailed(
+				newCtx, tenantID, taskID, nil, err.Error(), time.Now(),
+			); persistErr != nil {
+				logger.Errorf(newCtx, "Failed to persist evaluation failure: %v", persistErr)
+			}
 			logger.Errorf(newCtx, "Evaluation task failed: %v, task ID: %s", err, taskID)
 			return
 		}
 
 		// Mark task as completed successfully
 		logger.Infof(newCtx, "Evaluation task completed successfully, task ID: %s", taskID)
-		detail.Task.Status = types.EvaluationStatueSuccess
+		if err := e.evaluationRunRepository.MarkSuccess(
+			newCtx, tenantID, taskID, workerDetail.Metric, time.Now(),
+		); err != nil {
+			logger.Errorf(newCtx, "Failed to persist evaluation success: %v", err)
+			message := fmt.Sprintf("failed to persist evaluation metrics: %v", err)
+			if failErr := e.evaluationRunRepository.MarkFailed(
+				newCtx, tenantID, taskID, nil, message, time.Now(),
+			); failErr != nil {
+				logger.Errorf(newCtx, "Failed to persist evaluation metric failure: %v", failErr)
+			}
+			return
+		}
+		workerDetail.Task.Status = types.EvaluationStatueSuccess
 	}()
 
 	logger.Infof(ctx, "Evaluation task created successfully, task ID: %s", taskID)
@@ -342,11 +337,12 @@ func (e *EvaluationService) EvalDataset(ctx context.Context, detail *types.Evalu
 	}
 	logger.Infof(ctx, "Dataset retrieved successfully with %d QA pairs", len(dataset))
 
-	// Update total QA pairs count in task details
-	e.evaluationMemoryStorage.update(detail.Task.ID, func(params *types.EvaluationDetail) {
-		params.Task.Total = len(dataset)
-		logger.Infof(ctx, "Updated task total to %d QA pairs", params.Task.Total)
-	})
+	if err := e.evaluationRunRepository.UpdateTotal(
+		ctx, detail.Task.TenantID, detail.Task.ID, len(dataset),
+	); err != nil {
+		return fmt.Errorf("persist evaluation total: %w", err)
+	}
+	detail.Task.Total = len(dataset)
 
 	// Extract and organize passages from dataset
 	passages := getPassageList(dataset)
@@ -378,8 +374,6 @@ func (e *EvaluationService) EvalDataset(ctx context.Context, detail *types.Evalu
 	}()
 
 	// Initialize parallel evaluation metrics
-	var finished int
-	var mu sync.Mutex
 	var g errgroup.Group
 	metricHook := NewHookMetric(len(dataset))
 
@@ -424,16 +418,11 @@ func (e *EvaluationService) EvalDataset(ctx context.Context, detail *types.Evalu
 			metricHook.recordChatResponse(i, chatManage.ChatResponse)
 			metricHook.recordFinish(i)
 
-			// Update progress metrics
-			mu.Lock()
-			finished += 1
-			metricResult := metricHook.MetricResult()
-			mu.Unlock()
-			e.evaluationMemoryStorage.update(detail.Task.ID, func(params *types.EvaluationDetail) {
-				params.Metric = metricResult
-				params.Task.Finished = finished
-				logger.Infof(ctx, "Updated task progress: %d/%d completed", finished, params.Task.Total)
-			})
+			if err := e.evaluationRunRepository.IncrementFinished(
+				ctx, detail.Task.TenantID, detail.Task.ID,
+			); err != nil {
+				return fmt.Errorf("persist evaluation progress: %w", err)
+			}
 			return nil
 		})
 	}
@@ -445,14 +434,100 @@ func (e *EvaluationService) EvalDataset(ctx context.Context, detail *types.Evalu
 		return err
 	}
 
-	// Final update of evaluation metrics
-	e.evaluationMemoryStorage.update(detail.Task.ID, func(params *types.EvaluationDetail) {
-		params.Metric = metricHook.MetricResult()
-		params.Task.Finished = finished
-	})
+	detail.Metric = metricHook.MetricResult()
+	detail.Task.Finished = detail.Task.Total
 
 	logger.Infof(ctx, "Dataset evaluation completed successfully, task ID: %s", detail.Task.ID)
 	return nil
+}
+
+func evaluationSnapshot(
+	detail *types.EvaluationDetail,
+	sourceKnowledgeBaseID *string,
+	embeddingModelID, summaryModelID, retrieveDriver string,
+) types.EvaluationConfigSnapshotV1 {
+	params := detail.Params
+	var rerankModelID *string
+	if params.RerankModelID != "" {
+		id := params.RerankModelID
+		rerankModelID = &id
+	}
+	snapshot := types.EvaluationConfigSnapshotV1{
+		SnapshotSchemaVersion: 1,
+		Dataset:               types.EvaluationDatasetSnapshot{DatasetID: detail.Task.DatasetID},
+		Pipeline: types.EvaluationPipelineSnapshot{
+			Name: "rag", Metrics: []string{"precision", "recall", "ndcg", "mrr", "map", "bleu", "rouge"},
+			NDCGCutoffs: []int{3, 10},
+		},
+		Retrieval: types.EvaluationRetrievalSnapshot{
+			VectorThreshold: params.VectorThreshold, KeywordThreshold: params.KeywordThreshold,
+			EmbeddingTopK: params.EmbeddingTopK, RerankTopK: params.RerankTopK,
+			RerankThreshold: params.RerankThreshold, RetrieveDriver: retrieveDriver,
+		},
+		Models: types.EvaluationModelsSnapshot{
+			EmbeddingModelID: embeddingModelID, ChatModelID: params.ChatModelID,
+			RerankModelID: rerankModelID, SummaryModelID: summaryModelID,
+		},
+		Generation: types.EvaluationGenerationSnapshot{
+			MaxRounds: params.MaxRounds, SummaryConfig: params.SummaryConfig,
+			FallbackResponse: params.FallbackResponse, RewritePromptSystem: params.RewritePromptSystem,
+			RewritePromptUser: params.RewritePromptUser,
+		},
+	}
+	if sourceKnowledgeBaseID != nil {
+		snapshot.SourceKnowledgeBase = &types.EvaluationSourceKBSnapshot{
+			ID: *sourceKnowledgeBaseID, EmbeddingModelID: embeddingModelID, SummaryModelID: summaryModelID,
+		}
+	}
+	return snapshot
+}
+
+func evaluationRunToDetail(run *types.EvaluationRun) *types.EvaluationDetail {
+	snapshot := run.ConfigSnapshot
+	params := &types.ChatManage{PipelineRequest: types.PipelineRequest{
+		MaxRounds:           snapshot.Generation.MaxRounds,
+		VectorThreshold:     snapshot.Retrieval.VectorThreshold,
+		KeywordThreshold:    snapshot.Retrieval.KeywordThreshold,
+		EmbeddingTopK:       snapshot.Retrieval.EmbeddingTopK,
+		RerankTopK:          snapshot.Retrieval.RerankTopK,
+		RerankThreshold:     snapshot.Retrieval.RerankThreshold,
+		ChatModelID:         run.ChatModelID,
+		SummaryConfig:       snapshot.Generation.SummaryConfig,
+		FallbackResponse:    snapshot.Generation.FallbackResponse,
+		RewritePromptSystem: snapshot.Generation.RewritePromptSystem,
+		RewritePromptUser:   snapshot.Generation.RewritePromptUser,
+	}}
+	if run.RerankModelID != nil {
+		params.RerankModelID = *run.RerankModelID
+	}
+	detail := &types.EvaluationDetail{
+		Task: &types.EvaluationTask{
+			ID: run.TaskID, TenantID: run.TenantID, DatasetID: run.DatasetID,
+			StartTime: run.CreatedAt, Status: run.Status, ErrMsg: run.ErrorMessage,
+			Total: run.Total, Finished: run.Finished,
+		},
+		Params: params,
+	}
+	detail.Metric = evaluationRunMetric(run)
+	return detail
+}
+
+func evaluationRunMetric(run *types.EvaluationRun) *types.MetricResult {
+	if run.Precision == nil || run.Recall == nil || run.NDCG3 == nil || run.NDCG10 == nil ||
+		run.MRR == nil || run.MAP == nil || run.BLEU1 == nil || run.BLEU2 == nil ||
+		run.BLEU4 == nil || run.ROUGE1 == nil || run.ROUGE2 == nil || run.ROUGEL == nil {
+		return nil
+	}
+	return &types.MetricResult{
+		RetrievalMetrics: types.RetrievalMetrics{
+			Precision: *run.Precision, Recall: *run.Recall, NDCG3: *run.NDCG3,
+			NDCG10: *run.NDCG10, MRR: *run.MRR, MAP: *run.MAP,
+		},
+		GenerationMetrics: types.GenerationMetrics{
+			BLEU1: *run.BLEU1, BLEU2: *run.BLEU2, BLEU4: *run.BLEU4,
+			ROUGE1: *run.ROUGE1, ROUGE2: *run.ROUGE2, ROUGEL: *run.ROUGEL,
+		},
+	}
 }
 
 // getPassageList extracts and organizes passages from QA pairs
