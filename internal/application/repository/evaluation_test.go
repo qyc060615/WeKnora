@@ -197,7 +197,7 @@ func TestEvaluationConfigSnapshotSecretExclusion(t *testing.T) {
 }
 
 func TestEvaluationMigrationParity(t *testing.T) {
-	postgres, err := os.ReadFile("../../../migrations/versioned/000088_evaluation_runs.up.sql")
+	postgres, err := os.ReadFile("../../../migrations/versioned/000091_evaluation_runs.up.sql")
 	require.NoError(t, err)
 	sqliteDDL, err := os.ReadFile("../../../migrations/sqlite/000013_evaluation_runs.up.sql")
 	require.NoError(t, err)
