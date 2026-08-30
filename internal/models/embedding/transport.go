@@ -12,9 +12,25 @@ import (
 // all embedding clients. Embedders are recreated as model configuration changes,
 // but their outbound connections can be safely reused across client instances,
 // so the transport (and its keep-alive pool) is built once at package load.
-var sharedEmbeddingHTTPTransport = secutils.NewSSRFSafeTransport(
-	secutils.DefaultSSRFSafeHTTPClientConfig(),
-)
+// It is wrapped in usageCountingTransport so every outbound HTTP attempt is
+// counted on the per-invocation usage span (see provider_requests).
+var sharedEmbeddingHTTPTransport = &usageCountingTransport{
+	inner: secutils.NewSSRFSafeTransport(secutils.DefaultSSRFSafeHTTPClientConfig()),
+}
+
+// usageCountingTransport counts each outbound HTTP attempt on the
+// per-invocation usage span. Because it sits at the transport boundary, it
+// observes the true number of httpClient.Do attempts — per-input requests and
+// WeKnora-implemented retries included — rather than the number of provider
+// method invocations.
+type usageCountingTransport struct {
+	inner http.RoundTripper
+}
+
+func (t *usageCountingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	noteEmbeddingProviderRequest(req.Context())
+	return t.inner.RoundTrip(req)
+}
 
 // validateEmbeddingBaseURL checks that a resolved embedding API base URL is safe
 // for outbound requests. Empty URLs are allowed (callers apply provider defaults).

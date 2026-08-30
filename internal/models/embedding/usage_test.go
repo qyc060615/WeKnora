@@ -2,6 +2,7 @@ package embedding
 
 import (
 	"context"
+	"net/http"
 	"sync"
 	"testing"
 	"time"
@@ -114,30 +115,89 @@ func TestEmbeddingUsageCacheAccounting(t *testing.T) {
 }
 
 func TestEmbeddingUsageProviderRequestCounter(t *testing.T) {
-	span := &usageSpan{}
-	ctx := context.WithValue(context.Background(), usageSpanKey{}, span)
-	span.providerRequests.Add(1)
-	span.providerRequests.Add(1)
-	require.Equal(t, int64(2), span.providerRequests.Load())
-	require.Equal(t, span, spanFromContext(ctx))
+	ctx, span := withUsageSpan(context.Background())
+	noteEmbeddingProviderRequest(ctx)
+	noteEmbeddingProviderRequest(ctx)
+	noteEmbeddingProviderRequest(ctx)
+	require.Equal(t, int64(3), span.providerRequests.Load(), "each outbound attempt must increment the counter")
 }
 
 func TestEmbeddingUsageNativeTokens(t *testing.T) {
-	repo := &fakeUsageRepo{}
-	usage.SetRecorder(usage.NewRecorder(repo))
-	defer usage.SetRecorder(nil)
+	cases := []struct {
+		name        string
+		input       *int
+		total       *int
+		wantProv    types.TokenProvenance
+		wantInput   *int
+		wantTotal   *int
+	}{
+		{
+			"reported positive", intPtr(20), intPtr(30),
+			types.TokenProvenanceProviderReported, intPtr(20), intPtr(30),
+		},
+		{
+			"reported zero", intPtr(0), intPtr(0),
+			types.TokenProvenanceProviderReported, intPtr(0), intPtr(0),
+		},
+		{
+			"total only", nil, intPtr(7),
+			types.TokenProvenanceProviderReported, nil, intPtr(7),
+		},
+		{
+			"omitted usage", nil, nil,
+			types.TokenProvenanceUnreported, nil, nil,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := &fakeUsageRepo{}
+			usage.SetRecorder(usage.NewRecorder(repo))
+			defer usage.SetRecorder(nil)
 
-	w := wrapEmbeddingUsage(&usageFakeEmbedder{}, testEmbeddingConfig()).(*usageEmbedder)
-	ctx, span := withUsageSpan(tenantCtx(1))
-	noteEmbeddingTokens(ctx, 20, 30) // Volcengine-style prompt + total tokens
-	w.record(ctx, span, time.Now(), 2, nil)
+			w := wrapEmbeddingUsage(&usageFakeEmbedder{}, testEmbeddingConfig()).(*usageEmbedder)
+			ctx, span := withUsageSpan(tenantCtx(1))
+			noteEmbeddingTokens(ctx, tc.input, tc.total)
+			w.record(ctx, span, time.Now(), 2, nil)
 
-	u := repo.last()
-	require.Equal(t, types.TokenProvenanceProviderReported, u.TokenProvenance)
-	require.Equal(t, 20, *u.InputTokens)
-	require.Equal(t, 30, *u.TotalTokens)
-	require.Nil(t, u.OutputTokens, "embedding has no output tokens")
+			u := repo.last()
+			require.Equal(t, tc.wantProv, u.TokenProvenance)
+			if tc.wantInput != nil {
+				require.NotNil(t, u.InputTokens)
+				require.Equal(t, *tc.wantInput, *u.InputTokens)
+			} else {
+				require.Nil(t, u.InputTokens)
+			}
+			if tc.wantTotal != nil {
+				require.NotNil(t, u.TotalTokens)
+				require.Equal(t, *tc.wantTotal, *u.TotalTokens)
+			} else {
+				require.Nil(t, u.TotalTokens)
+			}
+			require.Nil(t, u.OutputTokens, "embedding has no output tokens")
+		})
+	}
 }
+
+func intPtr(v int) *int { return &v }
+
+func TestUsageCountingTransportCountsAttempts(t *testing.T) {
+	ctx, span := withUsageSpan(context.Background())
+	transport := &usageCountingTransport{inner: roundTripperFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody}, nil
+	})}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://example.invalid", nil)
+	require.NoError(t, err)
+
+	for i := 0; i < 2; i++ {
+		_, err = transport.RoundTrip(req)
+		require.NoError(t, err)
+	}
+	require.Equal(t, int64(2), span.providerRequests.Load(), "each transport round-trip is one outbound attempt")
+}
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
 
 func TestEmbeddingUsageEvaluationAttributionAndPurpose(t *testing.T) {
 	repo := &fakeUsageRepo{}

@@ -35,20 +35,31 @@ func spanFromContext(ctx context.Context) *usageSpan {
 	return span
 }
 
-// noteEmbeddingTokens records provider-reported token usage for the current
-// logical embedding invocation. Only positive values are counted: an embedding
-// provider never reports a meaningful zero-token usage.
-func noteEmbeddingTokens(ctx context.Context, inputTokens, totalTokens int) {
+// noteEmbeddingProviderRequest records one outbound HTTP attempt on the
+// per-invocation span. The shared transport calls it for every httpClient.Do
+// (retries included); the Ollama local embedder, which bypasses the shared
+// transport, calls it directly before its SDK round-trip.
+func noteEmbeddingProviderRequest(ctx context.Context) {
+	if span := spanFromContext(ctx); span != nil {
+		span.providerRequests.Add(1)
+	}
+}
+
+// noteEmbeddingTokens records provider-reported token usage. A nil pointer means
+// that token field was absent from the provider response; a non-nil pointer is
+// provider_reported even when its value is zero. The value is never used to
+// infer presence.
+func noteEmbeddingTokens(ctx context.Context, inputTokens, totalTokens *int) {
 	span := spanFromContext(ctx)
 	if span == nil {
 		return
 	}
-	if inputTokens > 0 {
-		span.inputTokens.Add(int64(inputTokens))
+	if inputTokens != nil {
+		span.inputTokens.Add(int64(*inputTokens))
 		span.inputReported.Store(true)
 	}
-	if totalTokens > 0 {
-		span.totalTokens.Add(int64(totalTokens))
+	if totalTokens != nil {
+		span.totalTokens.Add(int64(*totalTokens))
 		span.totalReported.Store(true)
 	}
 }
