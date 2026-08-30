@@ -279,3 +279,23 @@ func TestCloneContextKeepsTheNonInteractiveOAuthMark(t *testing.T) {
 		t.Fatal("IsMCPOAuthNonInteractive(cloned) = true for an unmarked context, want interactive prompts to stay possible")
 	}
 }
+
+// The evaluation run ID must survive a detach so the synchronous evaluation
+// lifecycle (indexing → QA workers → query embedding → rerank → answer
+// generation) keeps attributing its model usage to the run. It does not ride
+// the Asynq payload, so this clone path is the only way it propagates.
+func TestCloneContextPreservesEvaluationRunID(t *testing.T) {
+	t.Parallel()
+
+	ctx := types.WithEvaluationRunID(context.Background(), "run-123")
+	cloned := CloneContext(ctx)
+
+	got, ok := types.EvaluationRunIDFromContext(cloned)
+	if !ok || got != "run-123" {
+		t.Fatalf("EvaluationRunIDFromContext(cloned) = (%q, %v), want (%q, true)", got, ok, "run-123")
+	}
+
+	if _, ok := types.EvaluationRunIDFromContext(CloneContext(context.Background())); ok {
+		t.Fatal("an unmarked cloned context must carry no run ID")
+	}
+}

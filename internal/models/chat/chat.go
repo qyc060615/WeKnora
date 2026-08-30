@@ -104,7 +104,14 @@ type ChatConfig struct {
 	ModelName string
 	APIKey    string
 	ModelID   string
-	Provider  string
+	// Type is the model type snapshot (KnowledgeQA / VLLM / …), carried through
+	// from types.Model so model usage can record model_type without guessing.
+	Type types.ModelType
+	// TenantID is the tenant that owns the model config / credential, carried
+	// through from types.Model so model usage can snapshot the model owner
+	// independently of the business caller's tenant.
+	TenantID uint64
+	Provider string
 	// MaxConcurrency caps concurrent background calls to this model; 0 falls
 	// back to the process-wide default (see limiter.GateN).
 	MaxConcurrency int
@@ -129,6 +136,8 @@ func ConfigFromModel(m *types.Model, appID, appSecret string) *ChatConfig {
 		BaseURL:        m.Parameters.BaseURL,
 		ModelName:      m.Name,
 		Source:         m.Source,
+		Type:           m.Type,
+		TenantID:       m.TenantID,
 		Provider:       m.Parameters.Provider,
 		MaxConcurrency: m.Parameters.MaxConcurrency,
 		ExtraConfig:    m.Parameters.ExtraConfig,
@@ -152,9 +161,10 @@ func NewChat(config *ChatConfig, ollamaService *ollama.OllamaService) (Chat, err
 	}
 	c, err = wrapChatDebug(c, err)
 	c, err = wrapChatLangfuse(c, err)
-	// Outermost: hold the per-model concurrency slot only around the real
-	// provider round-trip, so the wait is excluded from debug/langfuse timing.
-	return wrapChatConcurrency(c, config.MaxConcurrency, err)
+	c, err = wrapChatConcurrency(c, config.MaxConcurrency, err)
+	// Outermost: record one model_usage row per logical invocation, so latency
+	// includes the concurrency wait and the full stream consumption.
+	return wrapChatUsage(c, config, err)
 }
 
 // NewRemoteChat 根据 provider 创建远程聊天实例。

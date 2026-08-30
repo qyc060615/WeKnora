@@ -49,7 +49,14 @@ type Config struct {
 	Dimensions                int               `json:"dimensions"`
 	SupportsDimensionOverride bool              `json:"supports_dimension_override"`
 	ModelID                   string            `json:"model_id"`
-	Provider                  string            `json:"provider"`
+	// Type is the model type snapshot (Embedding / …), carried through from
+	// types.Model so model usage can record model_type without guessing.
+	Type types.ModelType `json:"type"`
+	// TenantID is the tenant that owns the model config / credential, carried
+	// through from types.Model so model usage can snapshot the model owner
+	// independently of the business caller's tenant.
+	TenantID uint64 `json:"tenant_id"`
+	Provider string `json:"provider"`
 	// MaxConcurrency caps concurrent background calls to this model; 0 falls
 	// back to the process-wide default (see limiter.GateN).
 	MaxConcurrency int               `json:"max_concurrency"`
@@ -73,6 +80,8 @@ func ConfigFromModel(m *types.Model, appID, appSecret string) Config {
 		APIKey:                    m.Parameters.APIKey,
 		ModelID:                   m.ID,
 		ModelName:                 m.Name,
+		Type:                      m.Type,
+		TenantID:                  m.TenantID,
 		Dimensions:                m.Parameters.EmbeddingParameters.Dimension,
 		SupportsDimensionOverride: m.Parameters.EmbeddingParameters.SupportsDimensionOverride,
 		TruncatePromptTokens:      m.Parameters.EmbeddingParameters.TruncatePromptTokens,
@@ -105,6 +114,8 @@ func NewEmbedder(config Config, pooler EmbedderPooler, ollamaService *ollama.Oll
 		e = &langfuseEmbedder{inner: e}
 	}
 	e = wrapEmbeddingCache(e, config)
+	// Outermost: record one model_usage row per logical embedding invocation.
+	e = wrapEmbeddingUsage(e, config)
 	return e, nil
 }
 

@@ -93,6 +93,7 @@ func (r *WeKnoraCloudReranker) Rerank(ctx context.Context, query string, documen
 		req.Header.Set(k, v)
 	}
 
+	noteProviderRequest(ctx, len(documents))
 	resp, err := r.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("weknoracloud reranker: do request: %w", err)

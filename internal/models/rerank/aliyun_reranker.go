@@ -125,6 +125,7 @@ func (r *AliyunReranker) Rerank(ctx context.Context, query string, documents []s
 
 	logger.Debugf(ctx, "%s", buildRerankRequestDebug(r.modelName, r.baseURL, query, documents))
 
+	noteProviderRequest(ctx, len(documents))
 	resp, err := r.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("do request: %w", err)
@@ -145,6 +146,7 @@ func (r *AliyunReranker) Rerank(ctx context.Context, query string, documents []s
 	if err := json.Unmarshal(body, &response); err != nil {
 		return nil, fmt.Errorf("unmarshal response: %w", err)
 	}
+	noteRerankTokens(ctx, 0, response.Usage.TotalTokens)
 
 	// Convert Aliyun results to standard RankResult format
 	results := make([]RankResult, len(response.Output.Results))

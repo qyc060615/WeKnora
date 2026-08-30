@@ -71,6 +71,12 @@ func tokenUsageFromOpenAI(usage openai.Usage, providerName provider.ProviderName
 		CompletionTokens: usage.CompletionTokens,
 		TotalTokens:      usage.TotalTokens,
 	}
+	// The OpenAI-compatible usage block is verbatim provider output; total is
+	// reported by the provider (not recomputed). Empty means the provider sent
+	// no usage, which the Model Usage wrapper maps to unreported.
+	if usage.PromptTokens > 0 || usage.CompletionTokens > 0 || usage.TotalTokens > 0 {
+		u.TokenProvenance = types.TokenProvenanceProviderReported
+	}
 	if usage.PromptTokensDetails != nil {
 		read := usage.PromptTokensDetails.CachedTokens
 		u.SetPromptCacheUsage(read, 0, max(0, usage.PromptTokens-read), true)

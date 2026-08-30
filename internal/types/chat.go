@@ -30,6 +30,13 @@ type TokenUsage struct {
 	CacheMissTokens  int               `json:"cache_miss_tokens,omitempty"`
 	CacheReported    bool              `json:"cache_reported"`
 	CacheStatus      PromptCacheStatus `json:"cache_status,omitempty"`
+	// TokenProvenance records the trust source of the base token counts, set at
+	// provider-normalization time: provider_reported when the counts are
+	// verbatim from the provider's usage block, derived when total is computed
+	// from prompt+completion. The Model Usage wrapper copies it verbatim rather
+	// than inferring it from the final numbers; the zero value means the
+	// provider reported nothing (→ unreported).
+	TokenProvenance TokenProvenance `json:"token_provenance,omitempty"`
 }
 
 // SetPromptCacheUsage normalizes provider-specific cache counters into the
@@ -91,6 +98,7 @@ func (u *TokenUsage) Accumulate(other TokenUsage) {
 	u.CacheWriteTokens += other.CacheWriteTokens
 	u.CacheMissTokens += other.CacheMissTokens
 	u.CacheReported = u.CacheReported || other.CacheReported
+	u.TokenProvenance = mergeTokenProvenance(u.TokenProvenance, other.TokenProvenance)
 	switch {
 	case !u.CacheReported:
 		u.CacheStatus = mergeUnreportedCacheStatus(u.CacheStatus, other.CacheStatus)
@@ -98,6 +106,39 @@ func (u *TokenUsage) Accumulate(other TokenUsage) {
 		u.CacheStatus = PromptCacheStatusHit
 	default:
 		u.CacheStatus = PromptCacheStatusMiss
+	}
+}
+
+// mergeTokenProvenance returns the weaker (less trusted) of two provenances, so
+// a stream whose chunks accumulate usage degrades to the least trusted source
+// rather than silently upgrading a derived total to provider_reported.
+func mergeTokenProvenance(a, b TokenProvenance) TokenProvenance {
+	if a == "" {
+		return b
+	}
+	if b == "" {
+		return a
+	}
+	if tokenProvenanceRank(b) > tokenProvenanceRank(a) {
+		return b
+	}
+	return a
+}
+
+func tokenProvenanceRank(p TokenProvenance) int {
+	switch p {
+	case TokenProvenanceProviderReported:
+		return 1
+	case TokenProvenanceDerived:
+		return 2
+	case TokenProvenanceEstimated:
+		return 3
+	case TokenProvenanceUnreported:
+		return 4
+	case TokenProvenanceUnsupported:
+		return 5
+	default:
+		return 0
 	}
 }
 

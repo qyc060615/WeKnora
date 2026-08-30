@@ -106,6 +106,7 @@ func (r *ZhipuReranker) Rerank(ctx context.Context, query string, documents []st
 
 	logger.Debugf(ctx, "%s", buildRerankRequestDebug(r.modelName, r.baseURL, query, documents))
 
+	noteProviderRequest(ctx, len(documents))
 	resp, err := r.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("do request: %w", err)
@@ -126,6 +127,7 @@ func (r *ZhipuReranker) Rerank(ctx context.Context, query string, documents []st
 	if err := json.Unmarshal(body, &response); err != nil {
 		return nil, fmt.Errorf("unmarshal response: %w", err)
 	}
+	noteRerankTokens(ctx, response.Usage.PromptTokens, response.Usage.TotalTokens)
 
 	// Convert Zhipu results to standard RankResult format
 	results := make([]RankResult, len(response.Results))

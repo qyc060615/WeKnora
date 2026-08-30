@@ -434,6 +434,12 @@ func (c *cachingEmbedder) key(ctx context.Context, text string) string {
 
 func (c *cachingEmbedder) record(ctx context.Context, summary cacheRequestSummary) {
 	c.stats.add(summary)
+	// Publish the cache accounting to the outermost usage wrapper so it can
+	// record cache hits/misses/provider inputs on the logical usage row.
+	if span := spanFromContext(ctx); span != nil {
+		s := summary
+		span.cacheSummary = &s
+	}
 	hitRate := float64(0)
 	if summary.inputs > 0 {
 		hitRate = float64(summary.hits) / float64(summary.inputs)

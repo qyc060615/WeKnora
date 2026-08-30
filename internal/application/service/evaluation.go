@@ -271,14 +271,19 @@ func (e *EvaluationService) Evaluation(ctx context.Context,
 	if err := e.evaluationRunRepository.Create(ctx, run); err != nil {
 		return nil, fmt.Errorf("create evaluation run: %w", err)
 	}
+	evaluationRunID := run.ID
 	workerTask := *detail.Task
 	workerDetail := &types.EvaluationDetail{Task: &workerTask, Params: detail.Params.Clone()}
 
 	// Start evaluation in background goroutine
 	logger.Info(ctx, "Starting evaluation in background")
 	go func() {
-		// Create new context with logger for background task
-		newCtx := logger.CloneContext(ctx)
+		// Create new context with logger for background task, then attribute
+		// every synchronous model call in this evaluation lifecycle to the
+		// run so Model Usage v1 can tag usage rows with evaluation_run_id.
+		// Asynq async post-processing is a separate boundary and stays
+		// unattributed (the run ID does not ride the task payload).
+		newCtx := types.WithEvaluationRunID(logger.CloneContext(ctx), evaluationRunID)
 		logger.Infof(newCtx, "Background evaluation started for task ID: %s", taskID)
 
 		startedAt := time.Now()

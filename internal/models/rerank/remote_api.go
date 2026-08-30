@@ -119,6 +119,7 @@ func (r *OpenAIReranker) Rerank(ctx context.Context, query string, documents []s
 
 	logger.Debugf(ctx, "%s", buildRerankRequestDebug(r.modelName, fmt.Sprintf("%s/rerank", r.baseURL), query, documents))
 
+	noteProviderRequest(ctx, len(documents))
 	resp, err := r.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("do request: %w", err)
@@ -139,6 +140,7 @@ func (r *OpenAIReranker) Rerank(ctx context.Context, query string, documents []s
 	if err := json.Unmarshal(body, &response); err != nil {
 		return nil, fmt.Errorf("unmarshal response: %w", err)
 	}
+	noteRerankTokens(ctx, 0, response.Usage.TotalTokens)
 	return response.Results, nil
 }
 

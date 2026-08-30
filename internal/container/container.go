@@ -83,6 +83,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/models/chat"
 	"github.com/Tencent/WeKnora/internal/models/embedding"
 	"github.com/Tencent/WeKnora/internal/models/limiter"
+	"github.com/Tencent/WeKnora/internal/models/usage"
 	"github.com/Tencent/WeKnora/internal/models/utils/ollama"
 	"github.com/Tencent/WeKnora/internal/router"
 	"github.com/Tencent/WeKnora/internal/storageallowlist"
@@ -182,6 +183,8 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(repository.NewTaskPendingOpsRepository))
 	must(container.Provide(repository.NewTaskDeadLetterRepository))
 	must(container.Provide(repository.NewEvaluationRunRepository))
+	must(container.Provide(repository.NewModelUsageRepository))
+	must(container.Invoke(registerModelUsageRecorder))
 
 	// MCP manager for managing MCP client connections
 	logger.Debugf(ctx, "[Container] Registering MCP manager...")
@@ -624,6 +627,11 @@ func initRedisClient() (*redis.Client, error) {
 	}
 
 	return client, nil
+}
+
+func registerModelUsageRecorder(repo interfaces.ModelUsageRepository) {
+	usage.SetRecorder(usage.NewRecorder(repo))
+	logger.Infof(context.Background(), "[ModelUsage] recorder installed")
 }
 
 func registerEmbeddingCache(redisClient *redis.Client) {

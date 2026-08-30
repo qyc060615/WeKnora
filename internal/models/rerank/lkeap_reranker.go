@@ -140,6 +140,7 @@ func (r *LKEAPReranker) rerankBatch(ctx context.Context, query string, documents
 
 	logger.Debugf(ctx, "%s", buildRerankRequestDebug(r.modelName, LKEAPRerankEndpoint, query, documents))
 
+	noteProviderRequest(ctx, len(documents))
 	resp, err := r.client.RunRerankWithContext(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("LKEAP RunRerank: %w", err)

@@ -136,6 +136,7 @@ func (c *AnthropicChat) Chat(ctx context.Context, messages []Message, opts *Chat
 	httpReq.Header.Set("anthropic-version", anthropicVersion)
 	secutils.ApplyCustomHeaders(httpReq, c.customHeaders)
 
+	noteChatProviderRequest(ctx)
 	resp, err := rawHTTPClient.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("send request: %w", err)
@@ -198,6 +199,7 @@ func (c *AnthropicChat) ChatStream(ctx context.Context, messages []Message, opts
 	httpReq.Header.Set("anthropic-version", anthropicVersion)
 	secutils.ApplyCustomHeaders(httpReq, c.customHeaders)
 
+	noteChatProviderRequest(ctx)
 	resp, err := rawHTTPClient.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("send request: %w", err)
@@ -326,6 +328,9 @@ func (c *AnthropicChat) parseResponse(resp *anthropicResponse) *types.ChatRespon
 		CompletionTokens: outputTokens,
 		TotalTokens:      promptTokens + outputTokens,
 	}
+	if promptTokens > 0 || outputTokens > 0 {
+		usage.TokenProvenance = types.TokenProvenanceDerived
+	}
 	usage.SetPromptCacheUsage(cacheRead, cacheWrite, max(0, promptTokens-cacheRead),
 		resp.Usage.CacheReadInputTokens != nil || resp.Usage.CacheCreationInputTokens != nil)
 	return &types.ChatResponse{
@@ -399,6 +404,9 @@ func parseAnthropicSSE(reader io.Reader) (*types.ChatResponse, error) {
 		PromptTokens:     promptTokens,
 		CompletionTokens: outputTokens,
 		TotalTokens:      promptTokens + outputTokens,
+	}
+	if promptTokens > 0 || outputTokens > 0 {
+		usage.TokenProvenance = types.TokenProvenanceDerived
 	}
 	usage.SetPromptCacheUsage(cacheReadTokens, cacheWriteTokens,
 		max(0, promptTokens-cacheReadTokens), cacheReported)
