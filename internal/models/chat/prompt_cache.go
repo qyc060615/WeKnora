@@ -65,16 +65,18 @@ func providerCacheAccountingStatus(name provider.ProviderName) types.PromptCache
 	}
 }
 
-func tokenUsageFromOpenAI(usage openai.Usage, providerName provider.ProviderName) types.TokenUsage {
+func tokenUsageFromOpenAI(usage openai.Usage, providerName provider.ProviderName, reported bool) types.TokenUsage {
 	u := types.TokenUsage{
 		PromptTokens:     usage.PromptTokens,
 		CompletionTokens: usage.CompletionTokens,
 		TotalTokens:      usage.TotalTokens,
 	}
 	// The OpenAI-compatible usage block is verbatim provider output; total is
-	// reported by the provider (not recomputed). Empty means the provider sent
-	// no usage, which the Model Usage wrapper maps to unreported.
-	if usage.PromptTokens > 0 || usage.CompletionTokens > 0 || usage.TotalTokens > 0 {
+	// reported by the provider (not recomputed). `reported` carries whether the
+	// response contained a usage block at all — a reported all-zero usage is
+	// still provider_reported, while an omitted usage stays unreported. The
+	// token values themselves are never used to infer presence.
+	if reported {
 		u.TokenProvenance = types.TokenProvenanceProviderReported
 	}
 	if usage.PromptTokensDetails != nil {

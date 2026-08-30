@@ -26,7 +26,8 @@ func (c *RemoteAPIChat) parseCompletionResponse(resp *openai.ChatCompletionRespo
 	// 为设置了 Thinking=false 但模型仍返回思考内容的情况和部分不支持Thinking=false的思考模型(例如Miniax-M2.1)提供兜底策略
 	content := removeThinkingContent(choice.Message.Content)
 
-	usage := tokenUsageFromOpenAI(resp.Usage, c.provider)
+	// Non-stream OpenAI-compatible responses always include a usage block.
+	usage := tokenUsageFromOpenAI(resp.Usage, c.provider, true)
 	response := &types.ChatResponse{
 		Content:      content,
 		FinishReason: string(choice.FinishReason),
@@ -144,7 +145,7 @@ func (c *RemoteAPIChat) processStream(
 		}
 
 		if response.Usage != nil {
-			usage := tokenUsageFromOpenAI(*response.Usage, c.provider)
+			usage := tokenUsageFromOpenAI(*response.Usage, c.provider, true)
 			state.usage = &usage
 		}
 
@@ -238,7 +239,7 @@ func (c *RemoteAPIChat) processRawHTTPStream(
 		}
 
 		if streamResp.Usage != nil {
-			usage := tokenUsageFromOpenAI(*streamResp.Usage, c.provider)
+			usage := tokenUsageFromOpenAI(*streamResp.Usage, c.provider, true)
 			applyRawPromptCacheUsage(event.Data, &usage)
 			state.usage = &usage
 		}

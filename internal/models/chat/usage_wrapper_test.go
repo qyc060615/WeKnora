@@ -5,9 +5,12 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/Tencent/WeKnora/internal/models/provider"
 	"github.com/Tencent/WeKnora/internal/models/usage"
 	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/sashabaranov/go-openai"
 	"github.com/stretchr/testify/require"
 )
 
@@ -361,3 +364,178 @@ func TestChatUsagePromptCacheHitWithZeroBaseTokens(t *testing.T) {
 func intPtr(v int) *int { return &v }
 
 func ptr[T any](v T) *T { return &v }
+
+func TestTokenUsageFromOpenAIPresence(t *testing.T) {
+	// A reported all-zero usage block is provider_reported with 0, not unreported.
+	u := tokenUsageFromOpenAI(openai.Usage{}, provider.ProviderOpenAI, true)
+	require.Equal(t, types.TokenProvenanceProviderReported, u.TokenProvenance)
+
+	// An omitted usage block leaves provenance empty (→ unreported downstream).
+	u = tokenUsageFromOpenAI(openai.Usage{}, provider.ProviderOpenAI, false)
+	require.Equal(t, types.TokenProvenance(""), u.TokenProvenance)
+}
+
+func TestChatUsageTokenProvenanceReportedZero(t *testing.T) {
+	u := types.TokenUsage{
+		PromptTokens: 0, CompletionTokens: 0, TotalTokens: 0,
+		TokenProvenance: types.TokenProvenanceProviderReported,
+	}
+	mu := &types.ModelUsage{}
+	applyChatUsage(mu, &u)
+	require.Equal(t, types.TokenProvenanceProviderReported, mu.TokenProvenance)
+	require.NotNil(t, mu.InputTokens)
+	require.Equal(t, 0, *mu.InputTokens)
+	require.NotNil(t, mu.TotalTokens)
+	require.Equal(t, 0, *mu.TotalTokens)
+}
+
+// streamFuncChat builds its stream channel from a per-invocation function.
+type streamFuncChat struct {
+	fn func(context.Context) <-chan types.StreamResponse
+}
+
+func (c *streamFuncChat) Chat(context.Context, []Message, *ChatOptions) (*types.ChatResponse, error) {
+	return nil, nil
+}
+func (c *streamFuncChat) ChatStream(ctx context.Context, _ []Message, _ *ChatOptions) (<-chan types.StreamResponse, error) {
+	return c.fn(ctx), nil
+}
+func (c *streamFuncChat) GetModelName() string { return "fake" }
+func (c *streamFuncChat) GetModelID() string   { return "fake-id" }
+
+func TestChatUsageStreamProviderError(t *testing.T) {
+	repo := &fakeUsageRepo{}
+	usage.SetRecorder(usage.NewRecorder(repo))
+	defer usage.SetRecorder(nil)
+
+	inner := &usageFakeChat{stream: []types.StreamResponse{{ResponseType: types.ResponseTypeError, Done: true}}}
+	w, _ := wrapChatUsage(inner, ptr(testChatConfig()), nil)
+	ch, err := w.ChatStream(tenantCtx(1), nil, nil)
+	require.NoError(t, err)
+	for range ch {
+	}
+
+	require.Equal(t, 1, repo.count())
+	require.Equal(t, types.UsageStatusError, repo.last().Status)
+}
+
+func TestChatUsageStreamCancelled(t *testing.T) {
+	repo := &fakeUsageRepo{}
+	usage.SetRecorder(usage.NewRecorder(repo))
+	defer usage.SetRecorder(nil)
+
+	ctx, cancel := context.WithCancel(tenantCtx(1))
+	inner := &streamFuncChat{fn: func(sctx context.Context) <-chan types.StreamResponse {
+		ch := make(chan types.StreamResponse)
+		go func() {
+			defer close(ch)
+			select {
+			case ch <- types.StreamResponse{Content: "first"}:
+			case <-sctx.Done():
+				return
+			}
+			<-sctx.Done()
+		}()
+		return ch
+	}}
+	w, _ := wrapChatUsage(inner, ptr(testChatConfig()), nil)
+	out, err := w.ChatStream(ctx, nil, nil)
+	require.NoError(t, err)
+
+	require.Equal(t, "first", (<-out).Content)
+	cancel()
+	drainStream(t, out)
+
+	require.Equal(t, 1, repo.count())
+	require.Equal(t, types.UsageStatusCancelled, repo.last().Status)
+}
+
+func TestChatUsageStreamTimeout(t *testing.T) {
+	repo := &fakeUsageRepo{}
+	usage.SetRecorder(usage.NewRecorder(repo))
+	defer usage.SetRecorder(nil)
+
+	ctx, cancel := context.WithTimeout(tenantCtx(1), 50*time.Millisecond)
+	defer cancel()
+	inner := &streamFuncChat{fn: func(sctx context.Context) <-chan types.StreamResponse {
+		ch := make(chan types.StreamResponse)
+		go func() {
+			defer close(ch)
+			<-sctx.Done()
+		}()
+		return ch
+	}}
+	w, _ := wrapChatUsage(inner, ptr(testChatConfig()), nil)
+	out, err := w.ChatStream(ctx, nil, nil)
+	require.NoError(t, err)
+
+	drainStream(t, out) // deadline fires, stream ends
+
+	require.Equal(t, 1, repo.count())
+	require.Equal(t, types.UsageStatusTimeout, repo.last().Status)
+}
+
+func TestChatUsageStreamDownstreamStop(t *testing.T) {
+	repo := &fakeUsageRepo{}
+	usage.SetRecorder(usage.NewRecorder(repo))
+	defer usage.SetRecorder(nil)
+
+	ctx, cancel := context.WithCancel(tenantCtx(1))
+	defer cancel()
+	inner := &streamFuncChat{fn: func(sctx context.Context) <-chan types.StreamResponse {
+		ch := make(chan types.StreamResponse)
+		go func() {
+			defer close(ch)
+			for _, r := range []types.StreamResponse{{Content: "first"}, {Content: "second"}} {
+				select {
+				case ch <- r:
+				case <-sctx.Done():
+					return
+				}
+			}
+		}()
+		return ch
+	}}
+	w, _ := wrapChatUsage(inner, ptr(testChatConfig()), nil)
+	out, err := w.ChatStream(ctx, nil, nil)
+	require.NoError(t, err)
+
+	require.Equal(t, "first", (<-out).Content)
+	// Stop consuming out, then cancel; the wrapper goroutine must unblock on
+	// ctx.Done and terminal-record exactly once rather than leak.
+	cancel()
+	waitForRows(t, repo, 1)
+	require.Equal(t, types.UsageStatusCancelled, repo.last().Status)
+}
+
+func drainStream(t *testing.T, ch <-chan types.StreamResponse) {
+	t.Helper()
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case _, ok := <-ch:
+			if !ok {
+				return
+			}
+		case <-deadline:
+			t.Fatal("stream did not close within timeout")
+		}
+	}
+}
+
+func waitForRows(t *testing.T, repo *fakeUsageRepo, n int) {
+	t.Helper()
+	deadline := time.After(2 * time.Second)
+	ticker := time.NewTicker(5 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if repo.count() == n {
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("expected %d usage rows, got %d", n, repo.count())
+		case <-ticker.C:
+		}
+	}
+}

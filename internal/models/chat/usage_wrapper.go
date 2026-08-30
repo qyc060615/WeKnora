@@ -82,9 +82,16 @@ func (w *usageChat) ChatStream(ctx context.Context, messages []Message, opts *Ch
 	}
 	out := make(chan types.StreamResponse)
 	go func() {
-		defer close(out)
 		var usage types.TokenUsage
 		sawError := false
+		// Terminal accounting runs exactly once via defer, regardless of how
+		// the forwarding loop exits (normal close, provider error, ctx cancel or
+		// deadline). record runs before close(out) so a consumer that drains out
+		// to completion observes the usage row as already written.
+		defer func() {
+			w.record(ctx, span, start, &usage, nil, &sawError)
+			close(out)
+		}()
 		for resp := range ch {
 			if resp.ResponseType == types.ResponseTypeError {
 				sawError = true
@@ -92,9 +99,14 @@ func (w *usageChat) ChatStream(ctx context.Context, messages []Message, opts *Ch
 			if resp.Usage != nil {
 				usage.Accumulate(*resp.Usage)
 			}
-			out <- resp
+			// If the downstream stops consuming out (client disconnect) and the
+			// context ends, stop blocking rather than leaking the goroutine.
+			select {
+			case out <- resp:
+			case <-ctx.Done():
+				return
+			}
 		}
-		w.record(ctx, span, start, &usage, nil, &sawError)
 	}()
 	return out, nil
 }
