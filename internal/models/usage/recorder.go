@@ -9,11 +9,18 @@ import (
 	"context"
 	"errors"
 	"sync/atomic"
+	"time"
 
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/models/provider"
 	"github.com/Tencent/WeKnora/internal/types"
 )
+
+// persistenceTimeout bounds a single model_usage INSERT. Persistence is
+// best-effort: it must not block forever once the (detached) context has no
+// model-call deadline, so it gets its own short write budget, consistent with
+// the project's other write-side timeouts (memory/embedWriteTimeout).
+const persistenceTimeout = 10 * time.Second
 
 // Repository is the minimal persistence contract the recorder needs. It is
 // declared here (rather than importing types/interfaces) to avoid an import
@@ -102,7 +109,16 @@ func (r *Recorder) record(ctx context.Context, u *types.ModelUsage) {
 		u.Purpose = purpose
 	}
 
-	if err := r.repo.Create(ctx, u); err != nil {
+	// Attribution has now been captured from the original model context. The
+	// persistence itself must NOT inherit the model call's cancellation or
+	// deadline — a terminal cancelled/timeout row would otherwise fail its
+	// INSERT with "context canceled". Detach, then bound with an independent
+	// short write timeout so a detached insert can never block forever.
+	persistCtx := context.WithoutCancel(ctx)
+	persistCtx, cancel := context.WithTimeout(persistCtx, persistenceTimeout)
+	defer cancel()
+
+	if err := r.repo.Create(persistCtx, u); err != nil {
 		logger.Warnf(ctx, "[ModelUsage] failed to persist model usage: %v", err)
 	}
 }
