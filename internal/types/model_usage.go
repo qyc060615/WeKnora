@@ -74,10 +74,10 @@ const (
 type EmbeddingCacheStatus string
 
 const (
-	EmbeddingCacheStatusDisabled EmbeddingCacheStatus = "disabled"  // Cache not configured or bypassed
-	EmbeddingCacheStatusFullHit  EmbeddingCacheStatus = "full_hit"  // Every input served from cache
-	EmbeddingCacheStatusPartial  EmbeddingCacheStatus = "partial"   // Some inputs served, rest sent to provider
-	EmbeddingCacheStatusMiss     EmbeddingCacheStatus = "miss"      // No inputs served from cache
+	EmbeddingCacheStatusDisabled EmbeddingCacheStatus = "disabled" // Cache not configured or bypassed
+	EmbeddingCacheStatusFullHit  EmbeddingCacheStatus = "full_hit" // Every input served from cache
+	EmbeddingCacheStatusPartial  EmbeddingCacheStatus = "partial"  // Some inputs served, rest sent to provider
+	EmbeddingCacheStatusMiss     EmbeddingCacheStatus = "miss"     // No inputs served from cache
 )
 
 // ModelUsage is a call-level record of one logical model invocation. A single
@@ -86,7 +86,7 @@ const (
 // prompt-cache breakdowns in dedicated counters.
 //
 // Counters that a provider does not report are stored as NULL, never forged to
-// zero. No monetary cost is stored: there is no trusted pricing source in-tree.
+// zero. Monetary cost remains a separate derived model_usage_cost fact.
 type ModelUsage struct {
 	ID       string `gorm:"type:varchar(36);primaryKey"`
 	TenantID uint64 `gorm:"not null;index:idx_model_usage_tenant_created,priority:1;index:idx_model_usage_tenant_model_created,priority:1;index:idx_model_usage_tenant_evaluation_created,priority:1"`
@@ -108,10 +108,14 @@ type ModelUsage struct {
 	ModelType        string `gorm:"type:varchar(32);not null"`
 	ModelSource      string `gorm:"type:varchar(32);not null"`
 	ResolvedProvider string `gorm:"column:resolved_provider;type:varchar(64);not null"`
+	// ResolvedModelName is the effective model identity actually placed on the
+	// outbound provider request. It is deliberately nullable: legacy rows and
+	// provider paths that cannot prove the effective identity remain unknown.
+	ResolvedModelName *string `gorm:"column:resolved_model_name;type:varchar(255)"`
 
-	CallType       CallType       `gorm:"type:varchar(16);not null"`
-	Purpose        string         `gorm:"type:varchar(128);not null;default:''"`
-	Status         UsageStatus    `gorm:"type:varchar(32);not null"`
+	CallType        CallType        `gorm:"type:varchar(16);not null"`
+	Purpose         string          `gorm:"type:varchar(128);not null;default:''"`
+	Status          UsageStatus     `gorm:"type:varchar(32);not null"`
 	TokenProvenance TokenProvenance `gorm:"column:token_provenance;type:varchar(32);not null"`
 
 	// LatencyMS is wall-clock milliseconds of the logical invocation. NULL

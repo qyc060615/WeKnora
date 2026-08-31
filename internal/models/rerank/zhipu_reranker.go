@@ -54,8 +54,8 @@ type ZhipuRankResult struct {
 
 // ZhipuUsage contains information about token usage in the Zhipu API request
 type ZhipuUsage struct {
-	TotalTokens  int `json:"total_tokens"`  // Total tokens consumed
-	PromptTokens int `json:"prompt_tokens"` // Prompt tokens
+	TotalTokens  *int `json:"total_tokens"`  // nil means absent; non-nil zero is reported
+	PromptTokens *int `json:"prompt_tokens"` // nil means absent; non-nil zero is reported
 }
 
 // NewZhipuReranker creates a new instance of Zhipu reranker with the provided configuration

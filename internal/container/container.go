@@ -83,6 +83,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/models/chat"
 	"github.com/Tencent/WeKnora/internal/models/embedding"
 	"github.com/Tencent/WeKnora/internal/models/limiter"
+	modelpricing "github.com/Tencent/WeKnora/internal/models/pricing"
 	"github.com/Tencent/WeKnora/internal/models/usage"
 	"github.com/Tencent/WeKnora/internal/models/utils/ollama"
 	"github.com/Tencent/WeKnora/internal/router"
@@ -184,6 +185,7 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(repository.NewTaskDeadLetterRepository))
 	must(container.Provide(repository.NewEvaluationRunRepository))
 	must(container.Provide(repository.NewModelUsageRepository))
+	must(container.Provide(repository.NewPricingRepository))
 	must(container.Invoke(registerModelUsageRecorder))
 
 	// MCP manager for managing MCP client connections
@@ -629,8 +631,8 @@ func initRedisClient() (*redis.Client, error) {
 	return client, nil
 }
 
-func registerModelUsageRecorder(repo interfaces.ModelUsageRepository) {
-	usage.SetRecorder(usage.NewRecorder(repo))
+func registerModelUsageRecorder(repo interfaces.ModelUsageRepository, pricingRepo interfaces.PricingRepository) {
+	usage.SetRecorder(usage.NewRecorder(repo, modelpricing.NewProcessor(pricingRepo)))
 	logger.Infof(context.Background(), "[ModelUsage] recorder installed")
 }
 

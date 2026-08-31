@@ -45,18 +45,18 @@ func noteProviderRequest(ctx context.Context, pairs int) {
 }
 
 // noteRerankTokens records provider-reported token usage for the current
-// logical rerank invocation. Only positive values are counted.
-func noteRerankTokens(ctx context.Context, promptTokens, totalTokens int) {
+// logical rerank invocation. A non-nil zero is reported data; nil is absent.
+func noteRerankTokens(ctx context.Context, promptTokens, totalTokens *int) {
 	span := rerankSpanFromContext(ctx)
 	if span == nil {
 		return
 	}
-	if promptTokens > 0 {
-		span.inputTokens.Add(int64(promptTokens))
+	if promptTokens != nil {
+		span.inputTokens.Add(int64(*promptTokens))
 		span.inputReported.Store(true)
 	}
-	if totalTokens > 0 {
-		span.totalTokens.Add(int64(totalTokens))
+	if totalTokens != nil {
+		span.totalTokens.Add(int64(*totalTokens))
 		span.totalReported.Store(true)
 	}
 }
@@ -65,15 +65,16 @@ func noteRerankTokens(ctx context.Context, promptTokens, totalTokens int) {
 // Rerank (e.g. threshold-degradation re-run) is a second logical invocation and
 // therefore a second row.
 type usageReranker struct {
-	inner  Reranker
-	config RerankerConfig
+	inner             Reranker
+	config            RerankerConfig
+	resolvedModelName *string
 }
 
-func wrapRerankUsage(r Reranker, config *RerankerConfig, err error) (Reranker, error) {
+func wrapRerankUsage(r Reranker, config *RerankerConfig, resolvedModelName *string, err error) (Reranker, error) {
 	if err != nil || r == nil || config == nil {
 		return r, err
 	}
-	return &usageReranker{inner: r, config: *config}, nil
+	return &usageReranker{inner: r, config: *config, resolvedModelName: resolvedModelName}, nil
 }
 
 func (w *usageReranker) GetModelName() string { return w.inner.GetModelName() }
@@ -90,23 +91,25 @@ func (w *usageReranker) Rerank(ctx context.Context, query string, documents []st
 func (w *usageReranker) record(ctx context.Context, span *rerankUsageSpan, start time.Time, docCount int, err error) {
 	latencyMS := time.Since(start).Milliseconds()
 	mu := &types.ModelUsage{
-		ModelTenantID:    w.config.TenantID,
-		ModelID:          w.config.ModelID,
-		ModelName:        w.config.ModelName,
-		ModelType:        string(w.config.Type),
-		ModelSource:      string(w.config.Source),
-		ResolvedProvider: usage.ResolveProvider(w.config.Provider, w.config.BaseURL),
-		CallType:         types.CallTypeRerank,
-		Purpose:          "rerank",
-		Status:           usage.StatusFromError(err),
-		TokenProvenance:  types.TokenProvenanceUnreported,
-		LatencyMS:        &latencyMS,
-		LogicalRequests:  1,
-		Queries:          1,
-		Documents:        docCount,
-		Pairs:            docCount, // 1 query × N documents
-		ProviderRequests: int(span.providerRequests.Load()),
-		ProviderPairs:    int(span.providerPairs.Load()),
+		ModelTenantID:     w.config.TenantID,
+		ModelID:           w.config.ModelID,
+		ModelName:         w.config.ModelName,
+		ModelType:         string(w.config.Type),
+		ModelSource:       string(w.config.Source),
+		ResolvedProvider:  usage.ResolveProvider(w.config.Provider, w.config.BaseURL),
+		ResolvedModelName: w.resolvedModelName,
+		CallType:          types.CallTypeRerank,
+		Purpose:           "rerank",
+		Status:            usage.StatusFromError(err),
+		TokenProvenance:   types.TokenProvenanceUnreported,
+		LatencyMS:         &latencyMS,
+		StartedAt:         &start,
+		LogicalRequests:   1,
+		Queries:           1,
+		Documents:         docCount,
+		Pairs:             docCount, // 1 query × N documents
+		ProviderRequests:  int(span.providerRequests.Load()),
+		ProviderPairs:     int(span.providerPairs.Load()),
 	}
 	// Provider-reported native token usage (Jina/Aliyun/OpenAI total_tokens,
 	// Zhipu prompt_tokens + total_tokens). output_tokens stays NULL.

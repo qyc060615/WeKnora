@@ -42,15 +42,16 @@ func noteChatProviderRequest(ctx context.Context) {
 // OUTERMOST decorator so latency includes the concurrency wait, the full
 // provider round-trip and (for streaming) complete stream consumption.
 type usageChat struct {
-	inner  Chat
-	config ChatConfig
+	inner             Chat
+	config            ChatConfig
+	resolvedModelName *string
 }
 
-func wrapChatUsage(c Chat, config *ChatConfig, err error) (Chat, error) {
+func wrapChatUsage(c Chat, config *ChatConfig, resolvedModelName *string, err error) (Chat, error) {
 	if err != nil || c == nil || config == nil {
 		return c, err
 	}
-	return &usageChat{inner: c, config: *config}, nil
+	return &usageChat{inner: c, config: *config, resolvedModelName: resolvedModelName}, nil
 }
 
 func (w *usageChat) GetModelName() string { return w.inner.GetModelName() }
@@ -116,14 +117,16 @@ func (w *usageChat) ChatStream(ctx context.Context, messages []Message, opts *Ch
 func (w *usageChat) record(ctx context.Context, span *chatUsageSpan, start time.Time, tok *types.TokenUsage, err error, sawError *bool) {
 	latencyMS := time.Since(start).Milliseconds()
 	mu := &types.ModelUsage{
-		ModelTenantID:    w.config.TenantID,
-		ModelID:          w.config.ModelID,
-		ModelName:        w.config.ModelName,
-		ModelType:        string(w.config.Type),
-		ModelSource:      string(w.config.Source),
-		ResolvedProvider: usage.ResolveProvider(w.config.Provider, w.config.BaseURL),
-		CallType:         types.CallTypeChat,
-		LatencyMS:        &latencyMS,
+		ModelTenantID:     w.config.TenantID,
+		ModelID:           w.config.ModelID,
+		ModelName:         w.config.ModelName,
+		ModelType:         string(w.config.Type),
+		ModelSource:       string(w.config.Source),
+		ResolvedProvider:  usage.ResolveProvider(w.config.Provider, w.config.BaseURL),
+		ResolvedModelName: w.resolvedModelName,
+		CallType:          types.CallTypeChat,
+		LatencyMS:         &latencyMS,
+		StartedAt:         &start,
 		// Provider requests are counted at the actual outbound request sites
 		// (multimodal fallback included). SDK-internal retries are not visible.
 		ProviderRequests: int(span.providerRequests.Load()),

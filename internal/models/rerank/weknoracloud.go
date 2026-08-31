@@ -131,5 +131,7 @@ func (r *WeKnoraCloudReranker) effectiveModelName() string {
 	return r.modelName
 }
 
+func (r *WeKnoraCloudReranker) EffectiveModelName() string { return r.effectiveModelName() }
+
 func (r *WeKnoraCloudReranker) GetModelName() string { return r.modelName }
 func (r *WeKnoraCloudReranker) GetModelID() string   { return r.modelID }

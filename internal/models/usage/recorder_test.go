@@ -17,6 +17,16 @@ type fakeRepo struct {
 	err    error
 }
 
+type fakeCostProcessor struct {
+	called int
+	err    error
+}
+
+func (f *fakeCostProcessor) Process(_ context.Context, _ *types.ModelUsage) error {
+	f.called++
+	return f.err
+}
+
 func (f *fakeRepo) Create(_ context.Context, u *types.ModelUsage) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -79,6 +89,20 @@ func TestRecordSwallowsPersistenceError(t *testing.T) {
 	// Must not panic and must not surface the error to the caller.
 	Record(ctx, &types.ModelUsage{})
 	require.Equal(t, 0, repo.count())
+}
+
+func TestCostFailureDoesNotBreakOrRemoveUsage(t *testing.T) {
+	repo := &fakeRepo{}
+	costs := &fakeCostProcessor{err: errors.New("pricing unavailable")}
+	SetRecorder(NewRecorder(repo, costs))
+	defer SetRecorder(nil)
+
+	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(7))
+	Record(ctx, &types.ModelUsage{ID: "usage-survives"})
+
+	require.Equal(t, 1, repo.count(), "usage persistence must succeed independently")
+	require.Equal(t, 1, costs.called)
+	require.Equal(t, "usage-survives", repo.last().ID)
 }
 
 func TestResolveProvider(t *testing.T) {

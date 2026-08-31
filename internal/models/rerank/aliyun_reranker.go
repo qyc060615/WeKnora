@@ -71,7 +71,7 @@ type AliyunDocument struct {
 
 // AliyunUsage contains information about token usage in the Aliyun API request
 type AliyunUsage struct {
-	TotalTokens int `json:"total_tokens"` // Total tokens consumed
+	TotalTokens *int `json:"total_tokens"` // nil means the provider omitted the field
 }
 
 // NewAliyunReranker creates a new instance of Aliyun reranker with the provided configuration
@@ -146,7 +146,7 @@ func (r *AliyunReranker) Rerank(ctx context.Context, query string, documents []s
 	if err := json.Unmarshal(body, &response); err != nil {
 		return nil, fmt.Errorf("unmarshal response: %w", err)
 	}
-	noteRerankTokens(ctx, 0, response.Usage.TotalTokens)
+	noteRerankTokens(ctx, nil, response.Usage.TotalTokens)
 
 	// Convert Aliyun results to standard RankResult format
 	results := make([]RankResult, len(response.Output.Results))

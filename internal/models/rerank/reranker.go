@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/models/provider"
@@ -90,8 +91,8 @@ type RerankerConfig struct {
 	// TenantID is the tenant that owns the model config / credential, carried
 	// through from types.Model so model usage can snapshot the model owner
 	// independently of the business caller's tenant.
-	TenantID uint64
-	Provider string // Provider identifier: openai, aliyun, zhipu, siliconflow, jina, generic
+	TenantID    uint64
+	Provider    string // Provider identifier: openai, aliyun, zhipu, siliconflow, jina, generic
 	ExtraConfig map[string]string
 	// CustomHeaders 允许在调用远程 API 时附加自定义 HTTP 请求头（类似 OpenAI Python SDK 的 extra_headers）。
 	CustomHeaders map[string]string
@@ -128,12 +129,32 @@ func NewReranker(config *RerankerConfig) (Reranker, error) {
 	if err != nil {
 		return r, err
 	}
+	resolvedModelName := effectiveRerankModelName(r)
 	if logger.LLMDebugEnabled() {
 		r = &debugReranker{inner: r}
 	}
 	r, err = wrapRerankerLangfuse(r, nil)
 	// Outermost: record one model_usage row per logical Rerank invocation.
-	return wrapRerankUsage(r, config, err)
+	return wrapRerankUsage(r, config, resolvedModelName, err)
+}
+
+type effectiveRerankModelNamer interface {
+	EffectiveModelName() string
+}
+
+func effectiveRerankModelName(r Reranker) *string {
+	if r == nil {
+		return nil
+	}
+	name := r.GetModelName()
+	if providerModel, ok := r.(effectiveRerankModelNamer); ok {
+		name = providerModel.EffectiveModelName()
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil
+	}
+	return &name
 }
 
 // customHeaderSetter 表示支持注入自定义 HTTP header 的 reranker 实现。

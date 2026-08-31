@@ -54,7 +54,7 @@ type RerankResponse struct {
 
 // UsageInfo contains information about token usage in the API request
 type UsageInfo struct {
-	TotalTokens int `json:"total_tokens"` // Total tokens consumed
+	TotalTokens *int `json:"total_tokens"` // nil means the provider omitted the field
 }
 
 // NewOpenAIReranker creates a new instance of OpenAI reranker with the provided configuration
@@ -140,7 +140,7 @@ func (r *OpenAIReranker) Rerank(ctx context.Context, query string, documents []s
 	if err := json.Unmarshal(body, &response); err != nil {
 		return nil, fmt.Errorf("unmarshal response: %w", err)
 	}
-	noteRerankTokens(ctx, 0, response.Usage.TotalTokens)
+	noteRerankTokens(ctx, nil, response.Usage.TotalTokens)
 	return response.Results, nil
 }
 

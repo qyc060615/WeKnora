@@ -75,11 +75,14 @@ func TestRerankUsageSingleRequest(t *testing.T) {
 	usage.SetRecorder(usage.NewRecorder(repo))
 	defer usage.SetRecorder(nil)
 
-	w, err := wrapRerankUsage(&fakeReranker{batchCalls: 1}, ptr(testRerankConfig()), nil)
+	resolved := "provider-rerank"
+	w, err := wrapRerankUsage(&fakeReranker{batchCalls: 1}, ptr(testRerankConfig()), &resolved, nil)
 	require.NoError(t, err)
 
 	docs := []string{"d1", "d2", "d3", "d4"}
+	before := time.Now()
 	_, err = w.Rerank(tenantCtx(1), "q", docs)
+	after := time.Now()
 	require.NoError(t, err)
 
 	u := repo.last()
@@ -87,6 +90,9 @@ func TestRerankUsageSingleRequest(t *testing.T) {
 	require.Equal(t, types.CallTypeRerank, u.CallType)
 	require.Equal(t, uint64(1), u.TenantID)
 	require.Equal(t, uint64(10000), u.ModelTenantID)
+	require.Equal(t, "provider-rerank", *u.ResolvedModelName)
+	require.False(t, u.StartedAt.Before(before))
+	require.False(t, u.StartedAt.After(after))
 	require.Equal(t, 1, u.Queries)
 	require.Equal(t, 4, u.Documents)
 	require.Equal(t, 4, u.Pairs)
@@ -102,7 +108,7 @@ func TestRerankUsageInternalBatching(t *testing.T) {
 	usage.SetRecorder(usage.NewRecorder(repo))
 	defer usage.SetRecorder(nil)
 
-	w, _ := wrapRerankUsage(&fakeReranker{batchCalls: 2}, ptr(testRerankConfig()), nil)
+	w, _ := wrapRerankUsage(&fakeReranker{batchCalls: 2}, ptr(testRerankConfig()), nil, nil)
 	docs := []string{"d1", "d2", "d3", "d4"}
 	_, err := w.Rerank(tenantCtx(1), "q", docs)
 	require.NoError(t, err)
@@ -117,7 +123,7 @@ func TestRerankUsageSecondInvocationIsSecondRow(t *testing.T) {
 	usage.SetRecorder(usage.NewRecorder(repo))
 	defer usage.SetRecorder(nil)
 
-	w, _ := wrapRerankUsage(&fakeReranker{batchCalls: 1}, ptr(testRerankConfig()), nil)
+	w, _ := wrapRerankUsage(&fakeReranker{batchCalls: 1}, ptr(testRerankConfig()), nil, nil)
 	_, err := w.Rerank(tenantCtx(1), "q", []string{"a"})
 	require.NoError(t, err)
 	_, err = w.Rerank(tenantCtx(1), "q", []string{"a"})
@@ -131,17 +137,39 @@ func TestRerankUsageNativeTokens(t *testing.T) {
 	usage.SetRecorder(usage.NewRecorder(repo))
 	defer usage.SetRecorder(nil)
 
-	w, err := wrapRerankUsage(&fakeReranker{batchCalls: 1}, ptr(testRerankConfig()), nil)
+	w, err := wrapRerankUsage(&fakeReranker{batchCalls: 1}, ptr(testRerankConfig()), nil, nil)
 	require.NoError(t, err)
 	ctx, span := withRerankSpan(tenantCtx(1))
-	noteRerankTokens(ctx, 10, 25) // Zhipu-style prompt + total tokens
-	w.(*usageReranker).record(ctx, span, time.Now(), 2, nil)
+	prompt, total := 10, 25
+	noteRerankTokens(ctx, &prompt, &total) // Zhipu-style prompt + total tokens
+	start := time.Date(2026, 8, 31, 1, 2, 3, 4, time.UTC)
+	w.(*usageReranker).record(ctx, span, start, 2, nil)
 
 	u := repo.last()
+	require.Equal(t, start, *u.StartedAt)
 	require.Equal(t, types.TokenProvenanceProviderReported, u.TokenProvenance)
 	require.Equal(t, 10, *u.InputTokens)
 	require.Equal(t, 25, *u.TotalTokens)
 	require.Nil(t, u.OutputTokens, "rerank has no output tokens")
+}
+
+func TestRerankUsageReportedZeroIsPresent(t *testing.T) {
+	repo := &fakeUsageRepo{}
+	usage.SetRecorder(usage.NewRecorder(repo))
+	defer usage.SetRecorder(nil)
+	w, _ := wrapRerankUsage(&fakeReranker{batchCalls: 1}, ptr(testRerankConfig()), nil, nil)
+	ctx, span := withRerankSpan(tenantCtx(1))
+	zero := 0
+	noteRerankTokens(ctx, &zero, &zero)
+	w.(*usageReranker).record(ctx, span, time.Now(), 1, nil)
+	require.Equal(t, types.TokenProvenanceProviderReported, repo.last().TokenProvenance)
+	require.Equal(t, 0, *repo.last().InputTokens)
+	require.Equal(t, 0, *repo.last().TotalTokens)
+}
+
+func TestEffectiveRerankModelNameUsesProviderDefault(t *testing.T) {
+	r := &LKEAPReranker{modelName: LKEAPDefaultRerankModel}
+	require.Equal(t, LKEAPDefaultRerankModel, *effectiveRerankModelName(r))
 }
 
 func TestRerankUsageEvaluationAttribution(t *testing.T) {
@@ -149,7 +177,7 @@ func TestRerankUsageEvaluationAttribution(t *testing.T) {
 	usage.SetRecorder(usage.NewRecorder(repo))
 	defer usage.SetRecorder(nil)
 
-	w, _ := wrapRerankUsage(&fakeReranker{batchCalls: 1}, ptr(testRerankConfig()), nil)
+	w, _ := wrapRerankUsage(&fakeReranker{batchCalls: 1}, ptr(testRerankConfig()), nil, nil)
 	ctx := types.WithEvaluationRunID(tenantCtx(1), "run-3")
 	_, err := w.Rerank(ctx, "q", []string{"a"})
 	require.NoError(t, err)

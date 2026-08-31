@@ -103,6 +103,7 @@ func NewEmbedder(config Config, pooler EmbedderPooler, ollamaService *ollama.Oll
 	if setter, ok := e.(interface{ SetSupportsDimensionOverride(bool) }); ok {
 		setter.SetSupportsDimensionOverride(config.SupportsDimensionOverride)
 	}
+	resolvedModelName := effectiveEmbeddingModelName(e)
 	// Innermost: gate the real provider round-trips (including the per-sub-batch
 	// pool callbacks) before debug/langfuse wrap for logging/tracing. See
 	// concurrencyEmbedder for why this sits below the observability decorators.
@@ -115,8 +116,27 @@ func NewEmbedder(config Config, pooler EmbedderPooler, ollamaService *ollama.Oll
 	}
 	e = wrapEmbeddingCache(e, config)
 	// Outermost: record one model_usage row per logical embedding invocation.
-	e = wrapEmbeddingUsage(e, config)
+	e = wrapEmbeddingUsage(e, config, resolvedModelName)
 	return e, nil
+}
+
+type effectiveEmbeddingModelNamer interface {
+	EffectiveModelName() string
+}
+
+func effectiveEmbeddingModelName(e Embedder) *string {
+	if e == nil {
+		return nil
+	}
+	name := e.GetModelName()
+	if providerModel, ok := e.(effectiveEmbeddingModelNamer); ok {
+		name = providerModel.EffectiveModelName()
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil
+	}
+	return &name
 }
 
 func newEmbedder(config Config, pooler EmbedderPooler, ollamaService *ollama.OllamaService) (Embedder, error) {

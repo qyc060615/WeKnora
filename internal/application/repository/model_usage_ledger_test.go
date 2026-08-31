@@ -42,8 +42,11 @@ func newModelUsageFKTestDB(t *testing.T) *gorm.DB {
 	require.NoError(t, err)
 	usageDDL, err := os.ReadFile("../../../migrations/sqlite/000014_model_usage.up.sql")
 	require.NoError(t, err)
+	pricingDDL, err := os.ReadFile("../../../migrations/sqlite/000015_model_pricing.up.sql")
+	require.NoError(t, err)
 	require.NoError(t, db.Exec(string(evalDDL)).Error)
 	require.NoError(t, db.Exec(string(usageDDL)).Error)
+	require.NoError(t, db.Exec(string(pricingDDL)).Error)
 	return db
 }
 
@@ -111,6 +114,7 @@ func TestModelUsageRepositoryCreateAndRead(t *testing.T) {
 	require.Equal(t, uint64(10000), got.ModelTenantID)
 	require.Equal(t, "chat-safe", got.ModelID)
 	require.Equal(t, "openai", got.ResolvedProvider)
+	require.Nil(t, got.ResolvedModelName, "legacy/unknown effective identity must stay NULL")
 	require.Equal(t, types.CallTypeChat, got.CallType)
 	require.Equal(t, types.TokenProvenanceProviderReported, got.TokenProvenance)
 	require.Equal(t, int64(1200), *got.LatencyMS)
@@ -290,6 +294,10 @@ func TestModelUsageMigrationParity(t *testing.T) {
 	require.NoError(t, err)
 	sq, err := os.ReadFile("../../../migrations/sqlite/000014_model_usage.up.sql")
 	require.NoError(t, err)
+	pgPricing, err := os.ReadFile("../../../migrations/versioned/000093_model_pricing.up.sql")
+	require.NoError(t, err)
+	sqPricing, err := os.ReadFile("../../../migrations/sqlite/000015_model_pricing.up.sql")
+	require.NoError(t, err)
 
 	// Shared column contract (both dialects).
 	requiredColumns := []string{
@@ -302,6 +310,8 @@ func TestModelUsageMigrationParity(t *testing.T) {
 		"provider_requests", "provider_inputs", "cache_read_errors", "cache_write_errors",
 		"embedding_cache_status", "queries", "documents", "pairs", "provider_pairs",
 	}
+	require.Contains(t, string(pgPricing), "resolved_model_name")
+	require.Contains(t, string(sqPricing), "resolved_model_name")
 	for _, col := range requiredColumns {
 		require.Contains(t, string(pg), col)
 		require.Contains(t, string(sq), col)
@@ -337,6 +347,7 @@ func TestModelUsageMigrationParity(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(string(evalDDL)).Error)
 	require.NoError(t, db.Exec(string(sq)).Error)
+	require.NoError(t, db.Exec(string(sqPricing)).Error)
 
 	require.True(t, db.Migrator().HasTable("model_usage"))
 
@@ -350,7 +361,7 @@ func TestModelUsageMigrationParity(t *testing.T) {
 	}
 	// Nullable provider-reported / optional columns.
 	for _, nullCol := range []string{
-		"evaluation_run_id", "latency_ms", "started_at", "input_tokens", "output_tokens",
+		"evaluation_run_id", "resolved_model_name", "latency_ms", "started_at", "input_tokens", "output_tokens",
 		"total_tokens", "prompt_cache_status", "cache_read_tokens", "cache_write_tokens",
 		"cache_miss_tokens", "embedding_cache_status",
 	} {

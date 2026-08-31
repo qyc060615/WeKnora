@@ -159,12 +159,32 @@ func NewChat(config *ChatConfig, ollamaService *ollama.OllamaService) (Chat, err
 	default:
 		return nil, fmt.Errorf("unsupported chat model source: %s", config.Source)
 	}
+	resolvedModelName := effectiveChatModelName(c)
 	c, err = wrapChatDebug(c, err)
 	c, err = wrapChatLangfuse(c, err)
 	c, err = wrapChatConcurrency(c, config.MaxConcurrency, err)
 	// Outermost: record one model_usage row per logical invocation, so latency
 	// includes the concurrency wait and the full stream consumption.
-	return wrapChatUsage(c, config, err)
+	return wrapChatUsage(c, config, resolvedModelName, err)
+}
+
+type effectiveChatModelNamer interface {
+	EffectiveModelName() string
+}
+
+func effectiveChatModelName(c Chat) *string {
+	if c == nil {
+		return nil
+	}
+	name := c.GetModelName()
+	if providerModel, ok := c.(effectiveChatModelNamer); ok {
+		name = providerModel.EffectiveModelName()
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil
+	}
+	return &name
 }
 
 // NewRemoteChat 根据 provider 创建远程聊天实例。

@@ -30,14 +30,23 @@ type Repository interface {
 	Create(ctx context.Context, usage *types.ModelUsage) error
 }
 
+type CostProcessor interface {
+	Process(ctx context.Context, usage *types.ModelUsage) error
+}
+
 // Recorder persists completed logical model invocations. A single process-wide
 // instance is installed by the container and consumed by the wrappers.
 type Recorder struct {
-	repo Repository
+	repo          Repository
+	costProcessor CostProcessor
 }
 
-func NewRecorder(repo Repository) *Recorder {
-	return &Recorder{repo: repo}
+func NewRecorder(repo Repository, costProcessors ...CostProcessor) *Recorder {
+	r := &Recorder{repo: repo}
+	if len(costProcessors) > 0 {
+		r.costProcessor = costProcessors[0]
+	}
+	return r
 }
 
 // ResolveProvider returns the resolved provider name for a model config: the
@@ -120,5 +129,14 @@ func (r *Recorder) record(ctx context.Context, u *types.ModelUsage) {
 
 	if err := r.repo.Create(persistCtx, u); err != nil {
 		logger.Warnf(ctx, "[ModelUsage] failed to persist model usage: %v", err)
+		return
+	}
+	// Cost is a best-effort derived fact and is attempted only after the usage
+	// fact exists. A pricing lookup/calculation/write failure cannot roll back
+	// or otherwise affect the already-persisted model_usage row.
+	if r.costProcessor != nil {
+		if err := r.costProcessor.Process(persistCtx, u); err != nil {
+			logger.Warnf(ctx, "[ModelUsageCost] failed to derive or persist cost for usage %s: %v", u.ID, err)
+		}
 	}
 }

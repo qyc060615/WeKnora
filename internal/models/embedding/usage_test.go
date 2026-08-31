@@ -58,8 +58,11 @@ func TestEmbeddingUsageCacheDisabled(t *testing.T) {
 	usage.SetRecorder(usage.NewRecorder(repo))
 	defer usage.SetRecorder(nil)
 
-	w := wrapEmbeddingUsage(&usageFakeEmbedder{}, testEmbeddingConfig())
+	resolved := "provider-embedding"
+	w := wrapEmbeddingUsage(&usageFakeEmbedder{}, testEmbeddingConfig(), &resolved)
+	before := time.Now()
 	_, err := w.BatchEmbed(tenantCtx(1), []string{"a", "b", "c"})
+	after := time.Now()
 	require.NoError(t, err)
 
 	u := repo.last()
@@ -67,6 +70,9 @@ func TestEmbeddingUsageCacheDisabled(t *testing.T) {
 	require.Equal(t, types.CallTypeEmbedding, u.CallType)
 	require.Equal(t, uint64(1), u.TenantID)
 	require.Equal(t, uint64(10000), u.ModelTenantID)
+	require.Equal(t, "provider-embedding", *u.ResolvedModelName)
+	require.False(t, u.StartedAt.Before(before))
+	require.False(t, u.StartedAt.After(after))
 	require.Equal(t, 3, u.EmbeddingInputs)
 	require.Equal(t, 3, u.ProviderInputs, "cache disabled: every input reaches the provider")
 	require.Equal(t, 0, u.CacheHits)
@@ -75,6 +81,28 @@ func TestEmbeddingUsageCacheDisabled(t *testing.T) {
 	require.Equal(t, types.EmbeddingCacheStatusDisabled, *u.EmbeddingCacheStatus)
 	require.Equal(t, types.TokenProvenanceUnreported, u.TokenProvenance)
 	require.Equal(t, 1, u.LogicalRequests)
+}
+
+func TestEmbeddingUsageCacheDisabledFailureKeepsOutboundInputs(t *testing.T) {
+	repo := &fakeUsageRepo{}
+	usage.SetRecorder(usage.NewRecorder(repo))
+	defer usage.SetRecorder(nil)
+	w := wrapEmbeddingUsage(&failingUsageEmbedder{}, testEmbeddingConfig(), nil)
+	_, err := w.BatchEmbed(tenantCtx(1), []string{"a", "b"})
+	require.Error(t, err)
+	require.Equal(t, 1, repo.last().ProviderRequests)
+	require.Equal(t, 2, repo.last().ProviderInputs)
+}
+
+func TestEmbeddingUsageFailedPoolDoesNotGuessAllInputs(t *testing.T) {
+	repo := &fakeUsageRepo{}
+	usage.SetRecorder(usage.NewRecorder(repo))
+	defer usage.SetRecorder(nil)
+	w := wrapEmbeddingUsage(&failingPooledUsageEmbedder{}, testEmbeddingConfig(), nil)
+	_, err := w.BatchEmbedWithPool(tenantCtx(1), w, []string{"a", "b", "c"})
+	require.Error(t, err)
+	require.Equal(t, 1, repo.last().ProviderRequests)
+	require.Equal(t, 0, repo.last().ProviderInputs, "partial pooled delivery is unknown and must not be guessed")
 }
 
 func TestEmbeddingUsageCacheAccounting(t *testing.T) {
@@ -97,10 +125,10 @@ func TestEmbeddingUsageCacheAccounting(t *testing.T) {
 			usage.SetRecorder(usage.NewRecorder(repo))
 			defer usage.SetRecorder(nil)
 
-			w := wrapEmbeddingUsage(&usageFakeEmbedder{}, testEmbeddingConfig()).(*usageEmbedder)
+			w := wrapEmbeddingUsage(&usageFakeEmbedder{}, testEmbeddingConfig(), nil).(*usageEmbedder)
 			span := &usageSpan{}
 			span.cacheSummary = tc.summary
-			w.record(tenantCtx(1), span, time.Now(), tc.summary.inputs, nil)
+			w.record(tenantCtx(1), span, time.Now(), tc.summary.inputs, nil, true)
 
 			u := repo.last()
 			require.NotNil(t, u)
@@ -124,12 +152,12 @@ func TestEmbeddingUsageProviderRequestCounter(t *testing.T) {
 
 func TestEmbeddingUsageNativeTokens(t *testing.T) {
 	cases := []struct {
-		name        string
-		input       *int
-		total       *int
-		wantProv    types.TokenProvenance
-		wantInput   *int
-		wantTotal   *int
+		name      string
+		input     *int
+		total     *int
+		wantProv  types.TokenProvenance
+		wantInput *int
+		wantTotal *int
 	}{
 		{
 			"reported positive", intPtr(20), intPtr(30),
@@ -154,12 +182,14 @@ func TestEmbeddingUsageNativeTokens(t *testing.T) {
 			usage.SetRecorder(usage.NewRecorder(repo))
 			defer usage.SetRecorder(nil)
 
-			w := wrapEmbeddingUsage(&usageFakeEmbedder{}, testEmbeddingConfig()).(*usageEmbedder)
+			w := wrapEmbeddingUsage(&usageFakeEmbedder{}, testEmbeddingConfig(), nil).(*usageEmbedder)
 			ctx, span := withUsageSpan(tenantCtx(1))
 			noteEmbeddingTokens(ctx, tc.input, tc.total)
-			w.record(ctx, span, time.Now(), 2, nil)
+			start := time.Date(2026, 8, 31, 1, 2, 3, 4, time.UTC)
+			w.record(ctx, span, start, 2, nil, true)
 
 			u := repo.last()
+			require.Equal(t, start, *u.StartedAt)
 			require.Equal(t, tc.wantProv, u.TokenProvenance)
 			if tc.wantInput != nil {
 				require.NotNil(t, u.InputTokens)
@@ -204,7 +234,7 @@ func TestEmbeddingUsageEvaluationAttributionAndPurpose(t *testing.T) {
 	usage.SetRecorder(usage.NewRecorder(repo))
 	defer usage.SetRecorder(nil)
 
-	w := wrapEmbeddingUsage(&usageFakeEmbedder{}, testEmbeddingConfig())
+	w := wrapEmbeddingUsage(&usageFakeEmbedder{}, testEmbeddingConfig(), nil)
 	ctx := types.WithEvaluationRunID(tenantCtx(1), "run-7")
 	_, err := w.BatchEmbed(ctx, []string{"a"})
 	require.NoError(t, err)
@@ -217,15 +247,37 @@ func TestEmbeddingUsageEvaluationAttributionAndPurpose(t *testing.T) {
 
 type usageFakeEmbedder struct{}
 
-func (f *usageFakeEmbedder) Embed(context.Context, string) ([]float32, error) {
+type failingUsageEmbedder struct{ usageFakeEmbedder }
+
+func (f *failingUsageEmbedder) BatchEmbed(ctx context.Context, _ []string) ([][]float32, error) {
+	noteEmbeddingProviderRequest(ctx)
+	return nil, context.DeadlineExceeded
+}
+
+type failingPooledUsageEmbedder struct{ usageFakeEmbedder }
+
+func (f *failingPooledUsageEmbedder) BatchEmbedWithPool(ctx context.Context, _ Embedder, _ []string) ([][]float32, error) {
+	noteEmbeddingProviderRequest(ctx)
+	return nil, context.DeadlineExceeded
+}
+
+func (f *usageFakeEmbedder) Embed(ctx context.Context, _ string) ([]float32, error) {
+	noteEmbeddingProviderRequest(ctx)
 	return []float32{1}, nil
 }
-func (f *usageFakeEmbedder) BatchEmbed(context.Context, []string) ([][]float32, error) {
+func (f *usageFakeEmbedder) BatchEmbed(ctx context.Context, _ []string) ([][]float32, error) {
+	noteEmbeddingProviderRequest(ctx)
 	return [][]float32{{1}}, nil
 }
-func (f *usageFakeEmbedder) BatchEmbedWithPool(_ context.Context, _ Embedder, _ []string) ([][]float32, error) {
+func (f *usageFakeEmbedder) BatchEmbedWithPool(ctx context.Context, _ Embedder, _ []string) ([][]float32, error) {
+	noteEmbeddingProviderRequest(ctx)
 	return [][]float32{{1}}, nil
 }
 func (f *usageFakeEmbedder) GetModelName() string { return "fake" }
 func (f *usageFakeEmbedder) GetDimensions() int   { return 1 }
 func (f *usageFakeEmbedder) GetModelID() string   { return "fake-id" }
+
+func TestEffectiveEmbeddingModelNameUsesProviderOverride(t *testing.T) {
+	e := &WeKnoraCloudEmbedder{modelName: "configured", remoteModelName: "provider-effective"}
+	require.Equal(t, "provider-effective", *effectiveEmbeddingModelName(e))
+}

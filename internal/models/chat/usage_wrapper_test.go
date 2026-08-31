@@ -111,10 +111,13 @@ func TestChatUsageNonStreamProviderReported(t *testing.T) {
 			TokenProvenance: types.TokenProvenanceProviderReported,
 		},
 	}}
-	w, err := wrapChatUsage(inner, ptr(testChatConfig()), nil)
+	resolved := "provider-model"
+	w, err := wrapChatUsage(inner, ptr(testChatConfig()), &resolved, nil)
 	require.NoError(t, err)
 
+	before := time.Now()
 	resp, err := w.Chat(tenantCtx(1), nil, nil)
+	after := time.Now()
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 
@@ -124,6 +127,10 @@ func TestChatUsageNonStreamProviderReported(t *testing.T) {
 	require.Equal(t, uint64(1), u.TenantID)
 	require.Equal(t, uint64(10000), u.ModelTenantID)
 	require.Equal(t, "openai", u.ResolvedProvider)
+	require.Equal(t, "provider-model", *u.ResolvedModelName)
+	require.NotNil(t, u.StartedAt)
+	require.False(t, u.StartedAt.Before(before))
+	require.False(t, u.StartedAt.After(after))
 	require.Equal(t, 100, *u.InputTokens)
 	require.Equal(t, 50, *u.OutputTokens)
 	require.Equal(t, 150, *u.TotalTokens)
@@ -132,6 +139,29 @@ func TestChatUsageNonStreamProviderReported(t *testing.T) {
 	require.Equal(t, 1, u.LogicalRequests)
 	require.Equal(t, 1, u.ProviderRequests)
 	require.Nil(t, u.EvaluationRunID, "ordinary chat must have no evaluation run id")
+}
+
+func TestEffectiveChatModelNameNormalAndRemoteOverride(t *testing.T) {
+	normal, err := NewRemoteAPIChat(&ChatConfig{ModelName: "configured", Provider: "openai"})
+	require.NoError(t, err)
+	require.Equal(t, "configured", *effectiveChatModelName(normal))
+
+	override, err := NewRemoteAPIChat(&ChatConfig{
+		ModelName: "configured", Provider: "openai",
+		ExtraConfig: map[string]string{"remote_model_name": "provider-effective"},
+	})
+	require.NoError(t, err)
+	require.Equal(t, "provider-effective", *effectiveChatModelName(override))
+}
+
+func TestChatUsageStartedAtUsesRecordStart(t *testing.T) {
+	repo := &fakeUsageRepo{}
+	usage.SetRecorder(usage.NewRecorder(repo))
+	defer usage.SetRecorder(nil)
+	w, _ := wrapChatUsage(&usageFakeChat{}, ptr(testChatConfig()), nil, nil)
+	start := time.Date(2026, 8, 31, 1, 2, 3, 4, time.UTC)
+	w.(*usageChat).record(tenantCtx(1), &chatUsageSpan{}, start, nil, nil, nil)
+	require.Equal(t, start, *repo.last().StartedAt)
 }
 
 func TestChatUsageStreamSingleRow(t *testing.T) {
@@ -147,7 +177,7 @@ func TestChatUsageStreamSingleRow(t *testing.T) {
 		{Content: "hello"},
 		{Content: " world", Done: true, Usage: &usage1},
 	}}
-	w, err := wrapChatUsage(inner, ptr(testChatConfig()), nil)
+	w, err := wrapChatUsage(inner, ptr(testChatConfig()), nil, nil)
 	require.NoError(t, err)
 
 	ch, err := w.ChatStream(tenantCtx(1), nil, nil)
@@ -191,7 +221,7 @@ func TestChatUsagePromptCacheStatus(t *testing.T) {
 			defer usage.SetRecorder(nil)
 
 			inner := &usageFakeChat{resp: &types.ChatResponse{Usage: tc.usage}}
-			w, _ := wrapChatUsage(inner, ptr(testChatConfig()), nil)
+			w, _ := wrapChatUsage(inner, ptr(testChatConfig()), nil, nil)
 			_, err := w.Chat(tenantCtx(1), nil, nil)
 			require.NoError(t, err)
 
@@ -224,7 +254,7 @@ func TestChatUsageCancelledAndTimeout(t *testing.T) {
 			defer usage.SetRecorder(nil)
 
 			inner := &usageFakeChat{err: tc.err}
-			w, _ := wrapChatUsage(inner, ptr(testChatConfig()), nil)
+			w, _ := wrapChatUsage(inner, ptr(testChatConfig()), nil, nil)
 			_, _ = w.Chat(tenantCtx(1), nil, nil)
 
 			u := repo.last()
@@ -240,7 +270,7 @@ func TestChatUsagePersistenceFailureDoesNotBreakCall(t *testing.T) {
 	defer usage.SetRecorder(nil)
 
 	inner := &usageFakeChat{resp: &types.ChatResponse{Usage: types.TokenUsage{PromptTokens: 10, TotalTokens: 10}}}
-	w, _ := wrapChatUsage(inner, ptr(testChatConfig()), nil)
+	w, _ := wrapChatUsage(inner, ptr(testChatConfig()), nil, nil)
 	resp, err := w.Chat(tenantCtx(1), nil, nil)
 	require.NoError(t, err, "model call must succeed even when usage persistence fails")
 	require.NotNil(t, resp)
@@ -252,7 +282,7 @@ func TestChatUsageEvaluationAttribution(t *testing.T) {
 	defer usage.SetRecorder(nil)
 
 	inner := &usageFakeChat{resp: &types.ChatResponse{Usage: types.TokenUsage{PromptTokens: 10, TotalTokens: 10}}}
-	w, _ := wrapChatUsage(inner, ptr(testChatConfig()), nil)
+	w, _ := wrapChatUsage(inner, ptr(testChatConfig()), nil, nil)
 
 	ctx := types.WithEvaluationRunID(tenantCtx(1), "run-42")
 	_, err := w.Chat(ctx, nil, nil)
@@ -337,7 +367,7 @@ func TestChatUsageProviderRequestsFallback(t *testing.T) {
 			PromptTokens: 10, TotalTokens: 10, TokenProvenance: types.TokenProvenanceProviderReported,
 		}},
 	}
-	w, _ := wrapChatUsage(inner, ptr(testChatConfig()), nil)
+	w, _ := wrapChatUsage(inner, ptr(testChatConfig()), nil, nil)
 	_, err := w.Chat(tenantCtx(1), nil, nil)
 	require.NoError(t, err)
 
@@ -409,7 +439,7 @@ func TestChatUsageStreamProviderError(t *testing.T) {
 	defer usage.SetRecorder(nil)
 
 	inner := &usageFakeChat{stream: []types.StreamResponse{{ResponseType: types.ResponseTypeError, Done: true}}}
-	w, _ := wrapChatUsage(inner, ptr(testChatConfig()), nil)
+	w, _ := wrapChatUsage(inner, ptr(testChatConfig()), nil, nil)
 	ch, err := w.ChatStream(tenantCtx(1), nil, nil)
 	require.NoError(t, err)
 	for range ch {
@@ -438,7 +468,7 @@ func TestChatUsageStreamCancelled(t *testing.T) {
 		}()
 		return ch
 	}}
-	w, _ := wrapChatUsage(inner, ptr(testChatConfig()), nil)
+	w, _ := wrapChatUsage(inner, ptr(testChatConfig()), nil, nil)
 	out, err := w.ChatStream(ctx, nil, nil)
 	require.NoError(t, err)
 
@@ -465,7 +495,7 @@ func TestChatUsageStreamTimeout(t *testing.T) {
 		}()
 		return ch
 	}}
-	w, _ := wrapChatUsage(inner, ptr(testChatConfig()), nil)
+	w, _ := wrapChatUsage(inner, ptr(testChatConfig()), nil, nil)
 	out, err := w.ChatStream(ctx, nil, nil)
 	require.NoError(t, err)
 
@@ -496,7 +526,7 @@ func TestChatUsageStreamDownstreamStop(t *testing.T) {
 		}()
 		return ch
 	}}
-	w, _ := wrapChatUsage(inner, ptr(testChatConfig()), nil)
+	w, _ := wrapChatUsage(inner, ptr(testChatConfig()), nil, nil)
 	out, err := w.ChatStream(ctx, nil, nil)
 	require.NoError(t, err)
 

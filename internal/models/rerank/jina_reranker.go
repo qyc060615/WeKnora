@@ -43,7 +43,7 @@ type JinaRerankResponse struct {
 	Model   string       `json:"model"`   // Model used for reranking
 	Results []RankResult `json:"results"` // Ranked results with relevance scores
 	Usage   struct {
-		TotalTokens int `json:"total_tokens"` // Total tokens consumed
+		TotalTokens *int `json:"total_tokens"` // nil means the provider omitted the field
 	} `json:"usage"`
 }
 
@@ -115,7 +115,7 @@ func (r *JinaReranker) Rerank(ctx context.Context, query string, documents []str
 	if err := json.Unmarshal(body, &response); err != nil {
 		return nil, fmt.Errorf("unmarshal response: %w", err)
 	}
-	noteRerankTokens(ctx, 0, response.Usage.TotalTokens)
+	noteRerankTokens(ctx, nil, response.Usage.TotalTokens)
 	return response.Results, nil
 }
 
