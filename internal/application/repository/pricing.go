@@ -71,9 +71,18 @@ func (r *pricingRepository) CreateCost(ctx context.Context, cost *types.ModelUsa
 	return r.db.WithContext(ctx).Create(cost).Error
 }
 
-func (r *pricingRepository) GetCostByUsageID(ctx context.Context, usageID string) (*types.ModelUsageCost, error) {
+func (r *pricingRepository) GetCostByUsageID(ctx context.Context, tenantID uint64, usageID string) (*types.ModelUsageCost, error) {
 	var cost types.ModelUsageCost
-	err := r.db.WithContext(ctx).Where("usage_id = ?", usageID).First(&cost).Error
+	// Scope the read through model_usage so a caller can only see a cost for a
+	// usage that belongs to its own tenant. A cross-tenant usage_id resolves to
+	// not-found (nil, nil) exactly like a non-existent one, without leaking the
+	// existence of another tenant's usage.
+	err := r.db.WithContext(ctx).
+		Table("model_usage_cost").
+		Select("model_usage_cost.*").
+		Joins("JOIN model_usage ON model_usage_cost.usage_id = model_usage.id").
+		Where("model_usage.tenant_id = ? AND model_usage_cost.usage_id = ?", tenantID, usageID).
+		First(&cost).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}

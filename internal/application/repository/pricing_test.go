@@ -93,7 +93,7 @@ func TestSQLitePricingPreservesFixedPrecisionText(t *testing.T) {
 	require.Equal(t, tiny, *got.InputTokenPrice)
 }
 
-func TestMissingResolvedIdentityPersistsUnpricedCost(t *testing.T) {
+func TestMissingResolvedIdentityPersistsNoCostRow(t *testing.T) {
 	db := newPricingTestDB(t)
 	repo := NewPricingRepository(db)
 	ctx := context.Background()
@@ -102,11 +102,132 @@ func TestMissingResolvedIdentityPersistsUnpricedCost(t *testing.T) {
 	usage.ResolvedModelName = nil
 	require.NoError(t, db.Create(usage).Error)
 	require.NoError(t, modelpricing.NewProcessor(repo).Process(ctx, usage))
-	cost, err := repo.GetCostByUsageID(ctx, usage.ID)
+	cost, err := repo.GetCostByUsageID(ctx, 1, usage.ID)
 	require.NoError(t, err)
+	require.Nil(t, cost, "incomplete identity must not occupy a cost slot")
+}
+
+func TestNoPricingRulePersistsNoCostRow(t *testing.T) {
+	db := newPricingTestDB(t)
+	repo := NewPricingRepository(db)
+	ctx := context.Background()
+
+	start := time.Now().UTC().Truncate(time.Millisecond)
+	usage := testModelUsage(1, "no-rule")
+	usage.ID = uuid.NewString()
+	usage.ResolvedProvider = "fake"
+	resolved := "fake-model"
+	usage.ResolvedModelName = &resolved
+	usage.StartedAt = &start
+	require.NoError(t, db.Create(usage).Error)
+
+	require.NoError(t, modelpricing.NewProcessor(repo).Process(ctx, usage))
+	cost, err := repo.GetCostByUsageID(ctx, 1, usage.ID)
+	require.NoError(t, err)
+	require.Nil(t, cost, "a missing pricing rule must not persist an unpriced cost row")
+}
+
+func TestLaterPricingBackfillCreatesCost(t *testing.T) {
+	db := newPricingTestDB(t)
+	repo := NewPricingRepository(db)
+	ctx := context.Background()
+
+	start := time.Now().UTC().Truncate(time.Millisecond)
+	usage := testModelUsage(1, "backfill")
+	usage.ID = uuid.NewString()
+	usage.ResolvedProvider = "fake"
+	resolved := "fake-model"
+	usage.ResolvedModelName = &resolved
+	usage.StartedAt = &start
+	usage.InputTokens, usage.OutputTokens = intPtr(2), intPtr(3)
+	require.NoError(t, db.Create(usage).Error)
+
+	// No rule yet: Process must not create a cost row.
+	require.NoError(t, modelpricing.NewProcessor(repo).Process(ctx, usage))
+	cost, err := repo.GetCostByUsageID(ctx, 1, usage.ID)
+	require.NoError(t, err)
+	require.Nil(t, cost)
+
+	// Backfill a rule that covers the usage's started_at, then re-process the
+	// same usage. The previously-absent cost row must now insert cleanly.
+	one := types.Decimal("1")
+	rule := fakePricingRule(start.Add(-time.Hour), nil, "backfill-v1")
+	rule.InputTokenPrice, rule.OutputTokenPrice, rule.UnitScale = &one, &one, "1"
+	require.NoError(t, repo.CreatePricing(ctx, rule))
+
+	require.NoError(t, modelpricing.NewProcessor(repo).Process(ctx, usage))
+
+	cost, err = repo.GetCostByUsageID(ctx, 1, usage.ID)
+	require.NoError(t, err)
+	require.NotNil(t, cost)
+	require.Equal(t, types.CostStatusPriced, cost.Status)
+	require.Equal(t, types.Decimal("5"), *cost.TotalCost)
+	require.NotNil(t, cost.PricingRuleID)
+	require.Equal(t, "backfill-v1", *cost.PricingVersion)
+	require.Contains(t, string(cost.PricingSnapshot), `"pricing_version":"backfill-v1"`)
+}
+
+func TestRuleExistsButMeterMissingPersistsUnpricedCostWithSnapshot(t *testing.T) {
+	db := newPricingTestDB(t)
+	repo := NewPricingRepository(db)
+	ctx := context.Background()
+
+	start := time.Now().UTC().Truncate(time.Millisecond)
+	rule := fakePricingRule(start.Add(-time.Hour), nil, "v1")
+	rule.CallType = types.CallTypeEmbedding
+	rule.BillingMode = types.BillingModeEmbeddingInputToken
+	rule.OutputTokenPrice = nil // not used by embedding_input_token
+	require.NoError(t, repo.CreatePricing(ctx, rule))
+
+	usage := testModelUsage(1, "meter-missing")
+	usage.ID = uuid.NewString()
+	usage.ResolvedProvider = "fake"
+	usage.CallType = types.CallTypeEmbedding
+	usage.ModelType = string(types.ModelTypeEmbedding)
+	resolved := "fake-model"
+	usage.ResolvedModelName = &resolved
+	usage.StartedAt = &start
+	// InputTokens left nil: the rule resolves but the required meter is missing.
+	require.NoError(t, db.Create(usage).Error)
+
+	require.NoError(t, modelpricing.NewProcessor(repo).Process(ctx, usage))
+	cost, err := repo.GetCostByUsageID(ctx, 1, usage.ID)
+	require.NoError(t, err)
+	require.NotNil(t, cost, "a resolved rule with a missing meter is a finalized unpriced cost")
 	require.Equal(t, types.CostStatusUnpriced, cost.Status)
+	require.NotNil(t, cost.PricingRuleID)
+	require.NotEqual(t, types.JSON("{}"), cost.PricingSnapshot)
 	require.Nil(t, cost.TotalCost)
-	require.Nil(t, cost.PricingRuleID)
+}
+
+func TestGetCostByUsageIDTenantIsolation(t *testing.T) {
+	db := newPricingTestDB(t)
+	repo := NewPricingRepository(db)
+	ctx := context.Background()
+
+	start := time.Now().UTC().Truncate(time.Millisecond)
+	one := types.Decimal("1")
+	rule := fakePricingRule(start.Add(-time.Hour), nil, "v1")
+	rule.InputTokenPrice, rule.OutputTokenPrice, rule.UnitScale = &one, &one, "1"
+	require.NoError(t, repo.CreatePricing(ctx, rule))
+
+	usage := testModelUsage(7, "tenant-a")
+	usage.ID = uuid.NewString()
+	usage.ResolvedProvider = "fake"
+	resolved := "fake-model"
+	usage.ResolvedModelName = &resolved
+	usage.StartedAt = &start
+	usage.InputTokens, usage.OutputTokens = intPtr(2), intPtr(3)
+	require.NoError(t, db.Create(usage).Error)
+	require.NoError(t, modelpricing.NewProcessor(repo).Process(ctx, usage))
+
+	own, err := repo.GetCostByUsageID(ctx, 7, usage.ID)
+	require.NoError(t, err)
+	require.NotNil(t, own, "tenant A must read its own cost")
+
+	other, err := repo.GetCostByUsageID(ctx, 8, usage.ID)
+	require.NoError(t, err)
+	require.Nil(t, other, "tenant B must not read tenant A cost")
 }
 
 func TestPersistedCostKeepsHistoricalSnapshot(t *testing.T) {
@@ -126,14 +247,14 @@ func TestPersistedCostKeepsHistoricalSnapshot(t *testing.T) {
 	require.NoError(t, db.Create(usage).Error)
 	require.NoError(t, modelpricing.NewProcessor(repo).Process(ctx, usage))
 
-	cost, err := repo.GetCostByUsageID(ctx, usage.ID)
+	cost, err := repo.GetCostByUsageID(ctx, 1, usage.ID)
 	require.NoError(t, err)
 	require.Equal(t, types.Decimal("5"), *cost.TotalCost)
 	require.Contains(t, string(cost.PricingSnapshot), `"pricing_version":"v1"`)
 
 	ten := types.Decimal("10")
 	require.NoError(t, db.Model(&types.ModelPricing{}).Where("id = ?", rule.ID).Update("input_token_price", ten).Error)
-	still, err := repo.GetCostByUsageID(ctx, usage.ID)
+	still, err := repo.GetCostByUsageID(ctx, 1, usage.ID)
 	require.NoError(t, err)
 	require.Equal(t, types.Decimal("5"), *still.TotalCost)
 	require.Equal(t, cost.PricingSnapshot, still.PricingSnapshot)
