@@ -4,11 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/big"
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
+	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type pricingRepository struct{ db *gorm.DB }
@@ -40,6 +43,163 @@ func (r *pricingRepository) CreatePricing(ctx context.Context, rule *types.Model
 		}
 		return tx.Create(rule).Error
 	})
+}
+
+func (r *pricingRepository) ImportPricingBatch(ctx context.Context, rules []types.PricingImportRule) (*types.PricingImportResult, error) {
+	seen := make(map[string]struct{}, len(rules))
+	ids := make([]string, 0, len(rules)*2)
+	for i := range rules {
+		rule := &rules[i]
+		if rule.Pricing.ID == "" {
+			return nil, fmt.Errorf("model_pricing import rule %d: stable id is required", i)
+		}
+		if _, err := uuid.Parse(rule.Pricing.ID); err != nil {
+			return nil, fmt.Errorf("model_pricing import rule %q: invalid stable id: %w", rule.Pricing.ID, err)
+		}
+		if _, duplicate := seen[rule.Pricing.ID]; duplicate {
+			return nil, fmt.Errorf("model_pricing import: duplicate rule id %q", rule.Pricing.ID)
+		}
+		seen[rule.Pricing.ID] = struct{}{}
+		if err := rule.Pricing.Validate(); err != nil {
+			return nil, fmt.Errorf("model_pricing import rule %q: %w", rule.Pricing.ID, err)
+		}
+		ids = append(ids, rule.Pricing.ID)
+		if rule.ClosesRuleID != nil {
+			if *rule.ClosesRuleID == "" || *rule.ClosesRuleID == rule.Pricing.ID {
+				return nil, fmt.Errorf("model_pricing import rule %q: invalid closes_rule_id", rule.Pricing.ID)
+			}
+			if _, err := uuid.Parse(*rule.ClosesRuleID); err != nil {
+				return nil, fmt.Errorf("model_pricing import rule %q: invalid closes_rule_id: %w", rule.Pricing.ID, err)
+			}
+			ids = append(ids, *rule.ClosesRuleID)
+		}
+	}
+
+	result := &types.PricingImportResult{}
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var persisted []types.ModelPricing
+		if len(ids) > 0 {
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id IN ?", ids).Find(&persisted).Error; err != nil {
+				return fmt.Errorf("inspect existing model_pricing rules: %w", err)
+			}
+		}
+		existing := make(map[string]*types.ModelPricing, len(persisted))
+		for i := range persisted {
+			existing[persisted[i].ID] = &persisted[i]
+		}
+
+		for i := range rules {
+			incoming := &rules[i].Pricing
+			if current := existing[incoming.ID]; current != nil {
+				if !samePricingSemantics(current, incoming) {
+					return fmt.Errorf("model_pricing import: rule id %q already exists with different semantic content", incoming.ID)
+				}
+				result.NoOp++
+			}
+		}
+
+		// Close old intervals before inserting their replacements so the
+		// database overlap trigger observes the intended half-open intervals.
+		for i := range rules {
+			instruction := &rules[i]
+			if instruction.ClosesRuleID == nil {
+				continue
+			}
+			incoming := &instruction.Pricing
+			old := existing[*instruction.ClosesRuleID]
+			if old == nil {
+				return fmt.Errorf("model_pricing import rule %q: closes_rule_id %q does not exist", incoming.ID, *instruction.ClosesRuleID)
+			}
+			if old.ResolvedProvider != incoming.ResolvedProvider ||
+				old.ResolvedModelName != incoming.ResolvedModelName || old.CallType != incoming.CallType {
+				return fmt.Errorf("model_pricing import rule %q: closes_rule_id %q has different runtime identity", incoming.ID, old.ID)
+			}
+			if !old.EffectiveFrom.Before(incoming.EffectiveFrom) {
+				return fmt.Errorf("model_pricing import rule %q: replacement must start after closes_rule_id %q", incoming.ID, old.ID)
+			}
+			switch {
+			case old.EffectiveTo == nil:
+				res := tx.Model(&types.ModelPricing{}).Where("id = ? AND effective_to IS NULL", old.ID).
+					Update("effective_to", incoming.EffectiveFrom)
+				if res.Error != nil {
+					return fmt.Errorf("close model_pricing rule %q: %w", old.ID, res.Error)
+				}
+				if res.RowsAffected != 1 {
+					return fmt.Errorf("close model_pricing rule %q: interval changed concurrently", old.ID)
+				}
+				closedAt := incoming.EffectiveFrom
+				old.EffectiveTo = &closedAt
+				result.Closed++
+			case old.EffectiveTo.Equal(incoming.EffectiveFrom):
+				if existing[incoming.ID] == nil {
+					return fmt.Errorf("model_pricing import rule %q: closes_rule_id %q is already closed but replacement does not exist", incoming.ID, old.ID)
+				}
+			default:
+				return fmt.Errorf("model_pricing import rule %q: closes_rule_id %q was already closed at a different time", incoming.ID, old.ID)
+			}
+		}
+
+		for i := range rules {
+			incoming := &rules[i].Pricing
+			if existing[incoming.ID] != nil {
+				continue
+			}
+			if err := tx.Create(incoming).Error; err != nil {
+				return fmt.Errorf("insert model_pricing rule %q: %w", incoming.ID, err)
+			}
+			result.Inserted++
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func samePricingSemantics(a, b *types.ModelPricing) bool {
+	return a.ID == b.ID &&
+		a.ResolvedProvider == b.ResolvedProvider && a.ResolvedModelName == b.ResolvedModelName &&
+		a.CallType == b.CallType && a.Currency == b.Currency && a.BillingMode == b.BillingMode &&
+		decimalPtrEqual(a.InputTokenPrice, b.InputTokenPrice) &&
+		decimalPtrEqual(a.OutputTokenPrice, b.OutputTokenPrice) &&
+		decimalPtrEqual(a.TotalTokenPrice, b.TotalTokenPrice) &&
+		decimalPtrEqual(a.CacheReadTokenPrice, b.CacheReadTokenPrice) &&
+		decimalPtrEqual(a.CacheWriteTokenPrice, b.CacheWriteTokenPrice) &&
+		decimalPtrEqual(a.PerRequestPrice, b.PerRequestPrice) &&
+		decimalPtrEqual(a.PerInputPrice, b.PerInputPrice) &&
+		decimalPtrEqual(a.PerPairPrice, b.PerPairPrice) &&
+		decimalEqual(a.UnitScale, b.UnitScale) && a.EffectiveFrom.Equal(b.EffectiveFrom) &&
+		timePtrEqual(a.EffectiveTo, b.EffectiveTo) && a.PricingVersion == b.PricingVersion &&
+		a.SourceName == b.SourceName && stringPtrEqual(a.SourceReference, b.SourceReference) &&
+		timePtrEqual(a.SourceRetrievedAt, b.SourceRetrievedAt)
+}
+
+func decimalEqual(a, b types.Decimal) bool {
+	ar, aOK := new(big.Rat).SetString(string(a))
+	br, bOK := new(big.Rat).SetString(string(b))
+	return aOK && bOK && ar.Cmp(br) == 0
+}
+
+func decimalPtrEqual(a, b *types.Decimal) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return decimalEqual(*a, *b)
+}
+
+func stringPtrEqual(a, b *string) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
+}
+
+func timePtrEqual(a, b *time.Time) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return a.Equal(*b)
 }
 
 func (r *pricingRepository) ResolvePricing(ctx context.Context, provider, modelName string, callType types.CallType, at time.Time) (*types.ModelPricing, error) {

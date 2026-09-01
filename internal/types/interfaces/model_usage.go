@@ -12,4 +12,5 @@ import (
 type ModelUsageRepository interface {
 	Create(ctx context.Context, usage *types.ModelUsage) error
 	GetByID(ctx context.Context, tenantID uint64, id string) (*types.ModelUsage, error)
+	AggregateEvaluationRun(ctx context.Context, tenantID uint64, evaluationRunID string) (*types.EvaluationModelUsageAggregate, error)
 }

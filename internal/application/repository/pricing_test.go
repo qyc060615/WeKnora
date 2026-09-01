@@ -260,6 +260,114 @@ func TestPersistedCostKeepsHistoricalSnapshot(t *testing.T) {
 	require.Equal(t, cost.PricingSnapshot, still.PricingSnapshot)
 }
 
+func TestImportPricingBatchIdempotencyAndSemanticConflict(t *testing.T) {
+	db := newPricingTestDB(t)
+	repo := NewPricingRepository(db)
+	ctx := context.Background()
+	from := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	rule := fakePricingRule(from, nil, "import-v1")
+	rule.ID = "20000000-0000-4000-8000-000000000001"
+	one := types.Decimal("1")
+	rule.InputTokenPrice = &one
+
+	result, err := repo.ImportPricingBatch(ctx, []types.PricingImportRule{{Pricing: *rule}})
+	require.NoError(t, err)
+	require.Equal(t, &types.PricingImportResult{Inserted: 1}, result)
+
+	equivalent := *rule
+	equivalentOne := types.Decimal("1.000000000000000000")
+	equivalent.InputTokenPrice = &equivalentOne
+	result, err = repo.ImportPricingBatch(ctx, []types.PricingImportRule{{Pricing: equivalent}})
+	require.NoError(t, err)
+	require.Equal(t, &types.PricingImportResult{NoOp: 1}, result)
+
+	changedPrice := equivalent
+	two := types.Decimal("2")
+	changedPrice.InputTokenPrice = &two
+	_, err = repo.ImportPricingBatch(ctx, []types.PricingImportRule{{Pricing: changedPrice}})
+	require.ErrorContains(t, err, "different semantic content")
+
+	changedIdentity := equivalent
+	changedIdentity.ResolvedModelName = "other-model"
+	_, err = repo.ImportPricingBatch(ctx, []types.PricingImportRule{{Pricing: changedIdentity}})
+	require.ErrorContains(t, err, "different semantic content")
+}
+
+func TestImportPricingBatchClosureAndReimport(t *testing.T) {
+	db := newPricingTestDB(t)
+	repo := NewPricingRepository(db)
+	ctx := context.Background()
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	t1 := t0.Add(24 * time.Hour)
+	old := fakePricingRule(t0, nil, "v1")
+	old.ID = "20000000-0000-4000-8000-000000000010"
+	require.NoError(t, repo.CreatePricing(ctx, old))
+
+	replacement := fakePricingRule(t1, nil, "v2")
+	replacement.ID = "20000000-0000-4000-8000-000000000011"
+	result, err := repo.ImportPricingBatch(ctx, []types.PricingImportRule{{Pricing: *replacement, ClosesRuleID: &old.ID}})
+	require.NoError(t, err)
+	require.Equal(t, &types.PricingImportResult{Inserted: 1, Closed: 1}, result)
+
+	var persistedOld types.ModelPricing
+	require.NoError(t, db.First(&persistedOld, "id = ?", old.ID).Error)
+	require.NotNil(t, persistedOld.EffectiveTo)
+	require.True(t, persistedOld.EffectiveTo.Equal(t1))
+
+	result, err = repo.ImportPricingBatch(ctx, []types.PricingImportRule{{Pricing: *replacement, ClosesRuleID: &old.ID}})
+	require.NoError(t, err)
+	require.Equal(t, &types.PricingImportResult{NoOp: 1}, result)
+}
+
+func TestImportPricingBatchRejectsInvalidClosure(t *testing.T) {
+	db := newPricingTestDB(t)
+	repo := NewPricingRepository(db)
+	ctx := context.Background()
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	t1, t2 := t0.Add(time.Hour), t0.Add(2*time.Hour)
+
+	old := fakePricingRule(t0, nil, "open")
+	old.ID = "20000000-0000-4000-8000-000000000020"
+	require.NoError(t, repo.CreatePricing(ctx, old))
+	wrongIdentity := fakePricingRule(t1, nil, "wrong")
+	wrongIdentity.ID = "20000000-0000-4000-8000-000000000021"
+	wrongIdentity.ResolvedProvider = "other-provider"
+	_, err := repo.ImportPricingBatch(ctx, []types.PricingImportRule{{Pricing: *wrongIdentity, ClosesRuleID: &old.ID}})
+	require.ErrorContains(t, err, "different runtime identity")
+
+	alreadyClosed := fakePricingRule(t0, &t1, "closed")
+	alreadyClosed.ID = "20000000-0000-4000-8000-000000000022"
+	alreadyClosed.ResolvedModelName = "already-closed-model"
+	require.NoError(t, repo.CreatePricing(ctx, alreadyClosed))
+	later := fakePricingRule(t2, nil, "later")
+	later.ID = "20000000-0000-4000-8000-000000000023"
+	later.ResolvedModelName = "already-closed-model"
+	_, err = repo.ImportPricingBatch(ctx, []types.PricingImportRule{{Pricing: *later, ClosesRuleID: &alreadyClosed.ID}})
+	require.ErrorContains(t, err, "already closed at a different time")
+}
+
+func TestImportPricingBatchOverlapRollsBackWholeBatch(t *testing.T) {
+	db := newPricingTestDB(t)
+	repo := NewPricingRepository(db)
+	ctx := context.Background()
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	existing := fakePricingRule(t0, nil, "existing")
+	existing.ID = "20000000-0000-4000-8000-000000000030"
+	require.NoError(t, repo.CreatePricing(ctx, existing))
+
+	first := fakePricingRule(t0, nil, "first")
+	first.ID = "20000000-0000-4000-8000-000000000031"
+	first.ResolvedModelName = "other-model"
+	overlap := fakePricingRule(t0.Add(time.Minute), nil, "overlap")
+	overlap.ID = "20000000-0000-4000-8000-000000000032"
+	_, err := repo.ImportPricingBatch(ctx, []types.PricingImportRule{{Pricing: *first}, {Pricing: *overlap}})
+	require.Error(t, err)
+
+	var count int64
+	require.NoError(t, db.Model(&types.ModelPricing{}).Where("id = ?", first.ID).Count(&count).Error)
+	require.Zero(t, count, "an insert before the failing rule must be rolled back")
+}
+
 func TestPricingMigrationParity(t *testing.T) {
 	pg, err := os.ReadFile("../../../migrations/versioned/000093_model_pricing.up.sql")
 	require.NoError(t, err)
