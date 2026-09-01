@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"strings"
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/types"
@@ -53,8 +54,8 @@ func (r *pricingRepository) ImportPricingBatch(ctx context.Context, rules []type
 		if rule.Pricing.ID == "" {
 			return nil, fmt.Errorf("model_pricing import rule %d: stable id is required", i)
 		}
-		if _, err := uuid.Parse(rule.Pricing.ID); err != nil {
-			return nil, fmt.Errorf("model_pricing import rule %q: invalid stable id: %w", rule.Pricing.ID, err)
+		if err := validateCanonicalPricingUUID("stable id", rule.Pricing.ID); err != nil {
+			return nil, fmt.Errorf("model_pricing import rule %q: %w", rule.Pricing.ID, err)
 		}
 		if _, duplicate := seen[rule.Pricing.ID]; duplicate {
 			return nil, fmt.Errorf("model_pricing import: duplicate rule id %q", rule.Pricing.ID)
@@ -63,13 +64,16 @@ func (r *pricingRepository) ImportPricingBatch(ctx context.Context, rules []type
 		if err := rule.Pricing.Validate(); err != nil {
 			return nil, fmt.Errorf("model_pricing import rule %q: %w", rule.Pricing.ID, err)
 		}
+		if strings.TrimSpace(rule.Pricing.Currency) == "" {
+			return nil, fmt.Errorf("model_pricing import rule %q: currency must not be empty or whitespace", rule.Pricing.ID)
+		}
 		ids = append(ids, rule.Pricing.ID)
 		if rule.ClosesRuleID != nil {
 			if *rule.ClosesRuleID == "" || *rule.ClosesRuleID == rule.Pricing.ID {
 				return nil, fmt.Errorf("model_pricing import rule %q: invalid closes_rule_id", rule.Pricing.ID)
 			}
-			if _, err := uuid.Parse(*rule.ClosesRuleID); err != nil {
-				return nil, fmt.Errorf("model_pricing import rule %q: invalid closes_rule_id: %w", rule.Pricing.ID, err)
+			if err := validateCanonicalPricingUUID("closes_rule_id", *rule.ClosesRuleID); err != nil {
+				return nil, fmt.Errorf("model_pricing import rule %q: %w", rule.Pricing.ID, err)
 			}
 			ids = append(ids, *rule.ClosesRuleID)
 		}
@@ -170,9 +174,30 @@ func samePricingSemantics(a, b *types.ModelPricing) bool {
 		decimalPtrEqual(a.PerInputPrice, b.PerInputPrice) &&
 		decimalPtrEqual(a.PerPairPrice, b.PerPairPrice) &&
 		decimalEqual(a.UnitScale, b.UnitScale) && a.EffectiveFrom.Equal(b.EffectiveFrom) &&
-		timePtrEqual(a.EffectiveTo, b.EffectiveTo) && a.PricingVersion == b.PricingVersion &&
+		effectiveToReplayCompatible(a.EffectiveTo, b.EffectiveTo) && a.PricingVersion == b.PricingVersion &&
 		a.SourceName == b.SourceName && stringPtrEqual(a.SourceReference, b.SourceReference) &&
 		timePtrEqual(a.SourceRetrievedAt, b.SourceRetrievedAt)
+}
+
+// A later closes_rule_id import is allowed to narrow an open historical rule.
+// Replaying that original source (incoming effective_to NULL) is still a no-op;
+// every other effective_to difference remains a semantic conflict.
+func effectiveToReplayCompatible(persisted, incoming *time.Time) bool {
+	if timePtrEqual(persisted, incoming) {
+		return true
+	}
+	return persisted != nil && incoming == nil
+}
+
+func validateCanonicalPricingUUID(name, raw string) error {
+	parsed, err := uuid.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("%s must be a canonical lowercase UUID: %w", name, err)
+	}
+	if parsed.String() != raw {
+		return fmt.Errorf("%s must be a canonical lowercase UUID", name)
+	}
+	return nil
 }
 
 func decimalEqual(a, b types.Decimal) bool {

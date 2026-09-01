@@ -301,11 +301,13 @@ func TestImportPricingBatchClosureAndReimport(t *testing.T) {
 	t1 := t0.Add(24 * time.Hour)
 	old := fakePricingRule(t0, nil, "v1")
 	old.ID = "20000000-0000-4000-8000-000000000010"
-	require.NoError(t, repo.CreatePricing(ctx, old))
+	result, err := repo.ImportPricingBatch(ctx, []types.PricingImportRule{{Pricing: *old}})
+	require.NoError(t, err)
+	require.Equal(t, &types.PricingImportResult{Inserted: 1}, result)
 
 	replacement := fakePricingRule(t1, nil, "v2")
 	replacement.ID = "20000000-0000-4000-8000-000000000011"
-	result, err := repo.ImportPricingBatch(ctx, []types.PricingImportRule{{Pricing: *replacement, ClosesRuleID: &old.ID}})
+	result, err = repo.ImportPricingBatch(ctx, []types.PricingImportRule{{Pricing: *replacement, ClosesRuleID: &old.ID}})
 	require.NoError(t, err)
 	require.Equal(t, &types.PricingImportResult{Inserted: 1, Closed: 1}, result)
 
@@ -314,9 +316,43 @@ func TestImportPricingBatchClosureAndReimport(t *testing.T) {
 	require.NotNil(t, persistedOld.EffectiveTo)
 	require.True(t, persistedOld.EffectiveTo.Equal(t1))
 
+	result, err = repo.ImportPricingBatch(ctx, []types.PricingImportRule{{Pricing: *old}})
+	require.NoError(t, err, "replaying the original open-ended source after a legitimate closure must be a no-op")
+	require.Equal(t, &types.PricingImportResult{NoOp: 1}, result)
+	require.NoError(t, db.First(&persistedOld, "id = ?", old.ID).Error)
+	require.NotNil(t, persistedOld.EffectiveTo)
+	require.True(t, persistedOld.EffectiveTo.Equal(t1), "historical replay must never reopen the interval")
+
+	mutatedOld := *old
+	changed := types.Decimal("1")
+	mutatedOld.InputTokenPrice = &changed
+	_, err = repo.ImportPricingBatch(ctx, []types.PricingImportRule{{Pricing: mutatedOld}})
+	require.ErrorContains(t, err, "different semantic content")
+
 	result, err = repo.ImportPricingBatch(ctx, []types.PricingImportRule{{Pricing: *replacement, ClosesRuleID: &old.ID}})
 	require.NoError(t, err)
 	require.Equal(t, &types.PricingImportResult{NoOp: 1}, result)
+}
+
+func TestImportPricingBatchRejectsNonCanonicalUUIDAndWhitespaceCurrency(t *testing.T) {
+	db := newPricingTestDB(t)
+	repo := NewPricingRepository(db)
+	ctx := context.Background()
+	rule := fakePricingRule(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), nil, "invalid")
+
+	rule.ID = "A0000000-0000-4000-8000-00000000000A"
+	_, err := repo.ImportPricingBatch(ctx, []types.PricingImportRule{{Pricing: *rule}})
+	require.ErrorContains(t, err, "canonical lowercase UUID")
+
+	rule.ID = "a0000000-0000-4000-8000-00000000000a"
+	rule.Currency = "   "
+	_, err = repo.ImportPricingBatch(ctx, []types.PricingImportRule{{Pricing: *rule}})
+	require.ErrorContains(t, err, "currency must not be empty or whitespace")
+
+	rule.Currency = "TEST"
+	nonCanonicalClose := "{b0000000-0000-4000-8000-00000000000b}"
+	_, err = repo.ImportPricingBatch(ctx, []types.PricingImportRule{{Pricing: *rule, ClosesRuleID: &nonCanonicalClose}})
+	require.ErrorContains(t, err, "canonical lowercase UUID")
 }
 
 func TestImportPricingBatchRejectsInvalidClosure(t *testing.T) {

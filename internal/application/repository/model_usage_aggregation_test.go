@@ -154,6 +154,54 @@ func TestAggregateEvaluationRunCostsAreExactAndCurrencyGrouped(t *testing.T) {
 	require.Equal(t, types.Decimal("0.300000000000000003"), testCost.Total.PricedCost)
 }
 
+func TestAggregateEvaluationRunLegacyCostWithoutCurrency(t *testing.T) {
+	db := newModelUsageFKTestDB(t)
+	repo := NewModelUsageRepository(db)
+	ctx := context.Background()
+	runID := uuid.NewString()
+	insertEvaluationRun(t, db, runID, 62)
+
+	usage := aggregationUsage(62, runID, types.CallTypeChat)
+	usage.InputTokens = intPtr(7)
+	require.NoError(t, repo.Create(ctx, usage))
+	insertAggregationCostWithCurrency(t, db, usage.ID, types.CostStatusUnpriced, nil, nil, nil)
+
+	got, err := repo.AggregateEvaluationRun(ctx, 62, runID)
+	require.NoError(t, err)
+	require.Equal(t, types.CallCounts{Total: 1, Chat: 1}, got.Calls)
+	require.Equal(t, int64(7), *got.InputTokens.Sum)
+	require.Equal(t, int64(100), *got.Latency.SumMS)
+	require.Zero(t, got.NoCostRowCalls.Total)
+	require.Equal(t, types.CallCounts{Total: 1, Chat: 1}, got.CostRowsWithoutCurrency)
+	require.Empty(t, got.CostByCurrency)
+}
+
+func TestAggregateEvaluationRunMixedCostCoverage(t *testing.T) {
+	db := newModelUsageFKTestDB(t)
+	repo := NewModelUsageRepository(db)
+	ctx := context.Background()
+	runID := uuid.NewString()
+	insertEvaluationRun(t, db, runID, 63)
+
+	chat := aggregationUsage(63, runID, types.CallTypeChat)
+	embedding := aggregationUsage(63, runID, types.CallTypeEmbedding)
+	rerank := aggregationUsage(63, runID, types.CallTypeRerank)
+	for _, usage := range []*types.ModelUsage{chat, embedding, rerank} {
+		require.NoError(t, repo.Create(ctx, usage))
+	}
+	insertAggregationCost(t, db, chat.ID, types.CostStatusPriced, "USD", decPtr("0.1"), decPtr("0.1"))
+	insertAggregationCostWithCurrency(t, db, rerank.ID, types.CostStatusUnpriced, nil, nil, nil)
+
+	got, err := repo.AggregateEvaluationRun(ctx, 63, runID)
+	require.NoError(t, err)
+	require.Equal(t, types.CallCounts{Total: 3, Chat: 1, Embedding: 1, Rerank: 1}, got.Calls)
+	require.Equal(t, types.CallCounts{Total: 1, Embedding: 1}, got.NoCostRowCalls)
+	require.Equal(t, types.CallCounts{Total: 1, Rerank: 1}, got.CostRowsWithoutCurrency)
+	require.Len(t, got.CostByCurrency, 1)
+	require.Equal(t, "USD", got.CostByCurrency[0].Currency)
+	require.Equal(t, types.Decimal("0.1"), got.CostByCurrency[0].Chat.PricedCost)
+}
+
 func TestAggregateEvaluationRunEmpty(t *testing.T) {
 	db := newModelUsageFKTestDB(t)
 	runID := uuid.NewString()
@@ -234,8 +282,13 @@ func decPtr(value string) *types.Decimal {
 
 func insertAggregationCost(t *testing.T, db *gorm.DB, usageID string, status types.CostStatus, currency string, total, known *types.Decimal) {
 	t.Helper()
+	insertAggregationCostWithCurrency(t, db, usageID, status, &currency, total, known)
+}
+
+func insertAggregationCostWithCurrency(t *testing.T, db *gorm.DB, usageID string, status types.CostStatus, currency *string, total, known *types.Decimal) {
+	t.Helper()
 	require.NoError(t, db.Create(&types.ModelUsageCost{
-		UsageID: usageID, Status: status, Currency: &currency, TotalCost: total, KnownCost: known,
+		UsageID: usageID, Status: status, Currency: currency, TotalCost: total, KnownCost: known,
 		PricingSnapshot: types.JSON(`{}`), CalculatorVersion: "test", CalculatedAt: time.Now().UTC(),
 	}).Error)
 }

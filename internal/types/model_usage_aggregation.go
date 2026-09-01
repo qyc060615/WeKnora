@@ -93,6 +93,7 @@ type EvaluationModelUsageAggregate struct {
 	EmbeddingCache   EmbeddingCacheStatusCounts `json:"embedding_cache_statuses"`
 	Latency          LatencyAggregate           `json:"latency"`
 
-	CostByCurrency []CurrencyCostAggregate `json:"cost_by_currency"`
-	NoCostRowCalls CallCounts              `json:"no_cost_row_calls"`
+	CostByCurrency          []CurrencyCostAggregate `json:"cost_by_currency"`
+	NoCostRowCalls          CallCounts              `json:"no_cost_row_calls"`
+	CostRowsWithoutCurrency CallCounts              `json:"cost_rows_without_currency"`
 }

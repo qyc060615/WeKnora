@@ -174,16 +174,19 @@ func parsePricingSource(r io.Reader) (*pricingSource, []types.PricingImportRule,
 			utf8.RuneCountInString(raw.Currency) > 16 {
 			return nil, nil, fmt.Errorf("rules[%d]: runtime identity or currency exceeds model_pricing column limits", index)
 		}
-		if _, err := uuid.Parse(raw.ID); err != nil {
-			return nil, nil, fmt.Errorf("rules[%d].id must be a UUID: %w", index, err)
+		if strings.TrimSpace(raw.Currency) == "" {
+			return nil, nil, fmt.Errorf("rules[%d].currency must not be empty or whitespace", index)
+		}
+		if err := validateCanonicalUUID(fmt.Sprintf("rules[%d].id", index), raw.ID); err != nil {
+			return nil, nil, err
 		}
 		if _, duplicate := seen[raw.ID]; duplicate {
 			return nil, nil, fmt.Errorf("duplicate pricing rule id %q", raw.ID)
 		}
 		seen[raw.ID] = struct{}{}
 		if raw.ClosesRuleID != nil {
-			if _, err := uuid.Parse(*raw.ClosesRuleID); err != nil {
-				return nil, nil, fmt.Errorf("rules[%d].closes_rule_id must be a UUID: %w", index, err)
+			if err := validateCanonicalUUID(fmt.Sprintf("rules[%d].closes_rule_id", index), *raw.ClosesRuleID); err != nil {
+				return nil, nil, err
 			}
 			if previous, duplicate := closed[*raw.ClosesRuleID]; duplicate {
 				return nil, nil, fmt.Errorf("pricing rules %q and %q both close rule %q", previous, raw.ID, *raw.ClosesRuleID)
@@ -215,6 +218,17 @@ func parsePricingSource(r io.Reader) (*pricingSource, []types.PricingImportRule,
 		return nil, nil, err
 	}
 	return &source, converted, nil
+}
+
+func validateCanonicalUUID(name, raw string) error {
+	parsed, err := uuid.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("%s must be a canonical lowercase UUID: %w", name, err)
+	}
+	if parsed.String() != raw {
+		return fmt.Errorf("%s must be a canonical lowercase UUID", name)
+	}
+	return nil
 }
 
 func validatePricingStorageBounds(index int, pricing *types.ModelPricing) error {

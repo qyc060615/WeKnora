@@ -167,19 +167,15 @@ func aggregateUsageRow(result *types.EvaluationModelUsageAggregate, costs map[st
 	}
 
 	if row.CostID == nil {
-		result.NoCostRowCalls.Total++
-		switch row.CallType {
-		case types.CallTypeChat:
-			result.NoCostRowCalls.Chat++
-		case types.CallTypeEmbedding:
-			result.NoCostRowCalls.Embedding++
-		case types.CallTypeRerank:
-			result.NoCostRowCalls.Rerank++
-		}
+		incrementCallCounts(&result.NoCostRowCalls, row.CallType)
 		return nil
 	}
-	if row.CostCurrency == nil || *row.CostCurrency == "" || row.CostStatus == nil {
-		return fmt.Errorf("cost row %q has incomplete currency/status", *row.CostID)
+	if row.CostStatus == nil {
+		return fmt.Errorf("cost row %q has no status", *row.CostID)
+	}
+	if row.CostCurrency == nil || *row.CostCurrency == "" {
+		incrementCallCounts(&result.CostRowsWithoutCurrency, row.CallType)
+		return nil
 	}
 	accumulator := costs[*row.CostCurrency]
 	if accumulator == nil {
@@ -187,6 +183,18 @@ func aggregateUsageRow(result *types.EvaluationModelUsageAggregate, costs map[st
 		costs[*row.CostCurrency] = accumulator
 	}
 	return accumulator.add(row.CallType, *row.CostStatus, row.TotalCost, row.KnownCost)
+}
+
+func incrementCallCounts(counts *types.CallCounts, callType types.CallType) {
+	counts.Total++
+	switch callType {
+	case types.CallTypeChat:
+		counts.Chat++
+	case types.CallTypeEmbedding:
+		counts.Embedding++
+	case types.CallTypeRerank:
+		counts.Rerank++
+	}
 }
 
 func addNullableMetric(metric *types.NullableMetricAggregate, value *int, applicable bool) {
