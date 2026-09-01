@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -57,25 +58,100 @@ func (s *benchmarkUsageRepositoryStub) AggregateEvaluationRun(_ context.Context,
 
 func completeBenchmarkSnapshot() types.EvaluationConfigSnapshotV1 {
 	model := func(id string) *types.EvaluationConfiguredModelSnapshot {
-		return &types.EvaluationConfiguredModelSnapshot{ID: id, Name: id, Type: "test", Source: "test"}
+		return &types.EvaluationConfiguredModelSnapshot{
+			ID: id, Name: id, Type: "test", Source: string(types.ModelSourceRemote),
+			EndpointFingerprint: strings.Repeat("b", 64),
+		}
 	}
+	embedding := model("embedding")
+	embedding.Embedding = &types.EvaluationEmbeddingSnapshot{Dimension: 1024}
 	return types.EvaluationConfigSnapshotV1{
 		SnapshotSchemaVersion: 1, BenchmarkContractVersion: types.BenchmarkContractVersionV11,
 		Dataset: types.EvaluationDatasetSnapshot{
-			DatasetID: "benchmark_v1", DatasetSemanticSHA256: "dataset-hash",
+			DatasetID: "benchmark_v1", DatasetSemanticSHA256: strings.Repeat("a", 64),
 			CorpusCount: 32, QuestionCount: 15, QrelsCount: 15, AnswerCount: 15,
 			CorpusMode: "pre_chunked_passages", ChunkingApplied: false,
 		},
 		Pipeline: types.EvaluationPipelineSnapshot{
-			Name: "rag", Metrics: []string{"recall"}, NDCGCutoffs: []int{3, 10},
-			Tokenizer: types.EvaluationTokenizerSnapshot{Name: "jieba", DictionaryMode: "builtin"},
+			Name: "rag", Metrics: []string{"precision", "recall", "ndcg", "mrr", "map", "bleu", "rouge"},
+			NDCGCutoffs: []int{3, 10},
+			Tokenizer:   types.EvaluationTokenizerSnapshot{Name: "jieba", DictionaryMode: "builtin"},
 		},
 		Models: types.EvaluationModelsSnapshot{
 			EmbeddingModelID: "embedding", ChatModelID: "chat", SummaryModelID: "summary",
-			Embedding: model("embedding"), Chat: model("chat"), Summary: model("summary"),
+			Embedding: embedding, Chat: model("chat"), Summary: model("summary"),
 		},
 		Execution: types.EvaluationExecutionSnapshot{WorkerLimit: 2},
 	}
+}
+
+func TestValidateBenchmarkReproducibilitySnapshot(t *testing.T) {
+	require.NoError(t, validateBenchmarkReproducibilitySnapshot(completeBenchmarkSnapshot()))
+
+	tests := []struct {
+		name   string
+		mutate func(*types.EvaluationConfigSnapshotV1)
+		want   string
+	}{
+		{name: "bad hash length", mutate: func(s *types.EvaluationConfigSnapshotV1) {
+			s.Dataset.DatasetSemanticSHA256 = "abc"
+		}, want: "64 lowercase hexadecimal"},
+		{name: "non hex hash", mutate: func(s *types.EvaluationConfigSnapshotV1) {
+			s.Dataset.DatasetSemanticSHA256 = strings.Repeat("g", 64)
+		}, want: "64 lowercase hexadecimal"},
+		{name: "custom tokenizer without fingerprint", mutate: func(s *types.EvaluationConfigSnapshotV1) {
+			s.Pipeline.Tokenizer.DictionaryMode = "custom"
+		}, want: "custom tokenizer dictionary fingerprint"},
+		{name: "remote model without endpoint fingerprint", mutate: func(s *types.EvaluationConfigSnapshotV1) {
+			s.Models.Chat.EndpointFingerprint = ""
+		}, want: "remote chat model endpoint fingerprint"},
+		{name: "missing model", mutate: func(s *types.EvaluationConfigSnapshotV1) {
+			s.Models.Summary = nil
+		}, want: "summary model snapshot is missing"},
+		{name: "missing model identity", mutate: func(s *types.EvaluationConfigSnapshotV1) {
+			s.Models.Chat.Name = ""
+		}, want: "chat model identity is incomplete"},
+		{name: "missing embedding parameters", mutate: func(s *types.EvaluationConfigSnapshotV1) {
+			s.Models.Embedding.Embedding = nil
+		}, want: "embedding model parameters are missing"},
+		{name: "zero worker", mutate: func(s *types.EvaluationConfigSnapshotV1) {
+			s.Execution.WorkerLimit = 0
+		}, want: "worker limit must be positive"},
+		{name: "missing pipeline name", mutate: func(s *types.EvaluationConfigSnapshotV1) {
+			s.Pipeline.Name = ""
+		}, want: "pipeline name is required"},
+		{name: "wrong metrics", mutate: func(s *types.EvaluationConfigSnapshotV1) {
+			s.Pipeline.Metrics = []string{"recall", "precision"}
+		}, want: "metric suite"},
+		{name: "wrong cutoffs", mutate: func(s *types.EvaluationConfigSnapshotV1) {
+			s.Pipeline.NDCGCutoffs = []int{10, 3}
+		}, want: "NDCG cutoffs"},
+		{name: "qrels do not cover questions", mutate: func(s *types.EvaluationConfigSnapshotV1) {
+			s.Dataset.QrelsCount = 14
+		}, want: "qrels count"},
+		{name: "answers do not cover questions", mutate: func(s *types.EvaluationConfigSnapshotV1) {
+			s.Dataset.AnswerCount = 14
+		}, want: "answer count"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			snapshot := completeBenchmarkSnapshot()
+			tc.mutate(&snapshot)
+			err := validateBenchmarkReproducibilitySnapshot(snapshot)
+			require.ErrorContains(t, err, tc.want)
+			require.Equal(t, types.BenchmarkReproducibilityLegacyUnknown, benchmarkReproducibility(snapshot))
+		})
+	}
+
+	custom := completeBenchmarkSnapshot()
+	custom.Pipeline.Tokenizer.DictionaryMode = "custom"
+	custom.Pipeline.Tokenizer.DictionaryFingerprint = strings.Repeat("c", 64)
+	require.NoError(t, validateBenchmarkReproducibilitySnapshot(custom))
+	require.Equal(t, types.BenchmarkReproducibilityComplete, benchmarkReproducibility(custom))
+
+	legacy := types.EvaluationConfigSnapshotV1{SnapshotSchemaVersion: 1}
+	require.Error(t, validateBenchmarkReproducibilitySnapshot(legacy))
+	require.Equal(t, types.BenchmarkReproducibilityLegacyUnknown, benchmarkReproducibility(legacy))
 }
 
 func benchmarkRun(status types.EvaluationStatue) *types.EvaluationRun {

@@ -445,7 +445,9 @@ func (e *EvaluationService) EvalDataset(
 			metricHook.recordSearchResult(i, chatManage.SearchResult)
 			metricHook.recordRerankResult(i, chatManage.RerankResult)
 			metricHook.recordChatResponse(i, chatManage.ChatResponse)
-			metricHook.recordFinish(i)
+			if err := metricHook.recordFinish(i); err != nil {
+				return fmt.Errorf("finalize metrics for QA pair %d: %w", i, err)
+			}
 
 			if err := e.evaluationRunRepository.IncrementFinished(
 				ctx, detail.Task.TenantID, detail.Task.ID,

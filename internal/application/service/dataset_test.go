@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/parquet-go/parquet-go"
 	"github.com/stretchr/testify/require"
 )
 
@@ -103,4 +104,94 @@ func TestDatasetServiceReturnsLoadError(t *testing.T) {
 	_, err := service.GetDatasetByID(context.Background(), "default")
 	require.ErrorContains(t, err, `load dataset "default"`)
 	require.ErrorContains(t, err, "load queries")
+}
+
+func validIntegrityDataset() dataset {
+	return dataset{
+		queries: map[int64]string{1: "question"},
+		corpus:  map[int64]string{10: "passage one", 11: "passage two"},
+		answers: map[int64]string{20: "answer"},
+		qrels:   map[int64][]int64{1: {10, 11}},
+		qas:     map[int64]int64{1: 20},
+	}
+}
+
+func TestDatasetIntegrityRejectsMalformedSemanticData(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*dataset)
+		want   string
+	}{
+		{name: "query without qrels", mutate: func(d *dataset) { delete(d.qrels, 1) }, want: "query 1 has no qrels"},
+		{name: "query without qas", mutate: func(d *dataset) { delete(d.qas, 1) }, want: "query 1 has no qas relation"},
+		{name: "qrels unknown query", mutate: func(d *dataset) { d.qrels[2] = []int64{10} }, want: "qrels references unknown query 2"},
+		{name: "qrel unknown passage", mutate: func(d *dataset) { d.qrels[1] = []int64{99} }, want: "references unknown corpus passage"},
+		{name: "qas unknown query", mutate: func(d *dataset) { d.qas[2] = 20 }, want: "qas references unknown query 2"},
+		{name: "qas unknown answer", mutate: func(d *dataset) { d.qas[1] = 99 }, want: "references unknown answer"},
+		{name: "empty question", mutate: func(d *dataset) { d.queries[1] = " \n" }, want: "query 1 has empty text"},
+		{name: "empty corpus", mutate: func(d *dataset) { d.corpus[10] = "\t" }, want: "corpus passage 10 has empty text"},
+		{name: "empty answer", mutate: func(d *dataset) { d.answers[20] = " " }, want: "answer 20 has empty text"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			dataset := validIntegrityDataset()
+			tc.mutate(&dataset)
+			_, err := dataset.describe("malformed")
+			require.ErrorContains(t, err, tc.want)
+		})
+	}
+}
+
+func TestDatasetIntegrityAllowsMultipleDistinctQrelsAndPreservesText(t *testing.T) {
+	dataset := validIntegrityDataset()
+	dataset.queries[1] = "  question with intentional whitespace  "
+	described, err := dataset.describe("valid")
+	require.NoError(t, err)
+	require.Equal(t, dataset.queries[1], described.QAPairs[0].Question)
+	require.Equal(t, []int{10, 11}, described.QAPairs[0].PIDs)
+}
+
+func TestLoadDatasetRejectsDuplicateRows(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*[]TextInfo, *[]TextInfo, *[]TextInfo, *[]RelsInfo, *[]QaInfo)
+		want   string
+	}{
+		{name: "query id", mutate: func(q, _, _ *[]TextInfo, _ *[]RelsInfo, _ *[]QaInfo) {
+			*q = append(*q, TextInfo{ID: 1, Text: "duplicate"})
+		}, want: "duplicate query id 1"},
+		{name: "corpus id", mutate: func(_, c, _ *[]TextInfo, _ *[]RelsInfo, _ *[]QaInfo) {
+			*c = append(*c, TextInfo{ID: 10, Text: "duplicate"})
+		}, want: "duplicate corpus id 10"},
+		{name: "answer id", mutate: func(_, _, a *[]TextInfo, _ *[]RelsInfo, _ *[]QaInfo) {
+			*a = append(*a, TextInfo{ID: 20, Text: "duplicate"})
+		}, want: "duplicate answer id 20"},
+		{name: "qrel pair", mutate: func(_, _, _ *[]TextInfo, r *[]RelsInfo, _ *[]QaInfo) {
+			*r = append(*r, RelsInfo{QID: 1, PID: 10})
+		}, want: "duplicate qrel (qid=1, pid=10)"},
+		{name: "qas qid", mutate: func(_, _, _ *[]TextInfo, _ *[]RelsInfo, qas *[]QaInfo) {
+			*qas = append(*qas, QaInfo{QID: 1, AID: 20})
+		}, want: "duplicate qas qid 1"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			queries := []TextInfo{{ID: 1, Text: "question"}}
+			corpus := []TextInfo{{ID: 10, Text: "passage"}}
+			answers := []TextInfo{{ID: 20, Text: "answer"}}
+			qrels := []RelsInfo{{QID: 1, PID: 10}}
+			qas := []QaInfo{{QID: 1, AID: 20}}
+			tc.mutate(&queries, &corpus, &answers, &qrels, &qas)
+
+			directory := t.TempDir()
+			require.NoError(t, parquet.WriteFile(filepath.Join(directory, "queries.parquet"), queries))
+			require.NoError(t, parquet.WriteFile(filepath.Join(directory, "corpus.parquet"), corpus))
+			require.NoError(t, parquet.WriteFile(filepath.Join(directory, "answers.parquet"), answers))
+			require.NoError(t, parquet.WriteFile(filepath.Join(directory, "qrels.parquet"), qrels))
+			require.NoError(t, parquet.WriteFile(filepath.Join(directory, "qas.parquet"), qas))
+
+			_, err := loadDataset(directory)
+			require.ErrorContains(t, err, tc.want)
+		})
+	}
 }

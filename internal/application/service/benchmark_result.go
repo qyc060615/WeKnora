@@ -3,6 +3,9 @@ package service
 import (
 	"context"
 	"fmt"
+	"regexp"
+	"slices"
+	"strings"
 
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
@@ -81,17 +84,114 @@ func benchmarkQuality(run *types.EvaluationRun) (types.BenchmarkQuality, error) 
 }
 
 func benchmarkReproducibility(snapshot types.EvaluationConfigSnapshotV1) types.BenchmarkReproducibilityState {
-	modelsComplete := snapshot.Models.Embedding != nil && snapshot.Models.Chat != nil && snapshot.Models.Summary != nil
-	if snapshot.Models.RerankModelID != nil {
-		modelsComplete = modelsComplete && snapshot.Models.Rerank != nil
-	}
-	if snapshot.BenchmarkContractVersion != types.BenchmarkContractVersionV11 ||
-		snapshot.Dataset.DatasetSemanticSHA256 == "" || snapshot.Dataset.CorpusCount <= 0 ||
-		snapshot.Dataset.QuestionCount <= 0 || snapshot.Dataset.CorpusMode != "pre_chunked_passages" ||
-		snapshot.Dataset.ChunkingApplied || snapshot.Execution.WorkerLimit <= 0 ||
-		snapshot.Pipeline.Tokenizer.Name != "jieba" || snapshot.Pipeline.Tokenizer.DictionaryMode == "" ||
-		len(snapshot.Pipeline.Metrics) == 0 || len(snapshot.Pipeline.NDCGCutoffs) == 0 || !modelsComplete {
+	if err := validateBenchmarkReproducibilitySnapshot(snapshot); err != nil {
 		return types.BenchmarkReproducibilityLegacyUnknown
 	}
 	return types.BenchmarkReproducibilityComplete
+}
+
+var lowercaseSHA256Pattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+func validateBenchmarkReproducibilitySnapshot(snapshot types.EvaluationConfigSnapshotV1) error {
+	if snapshot.SnapshotSchemaVersion != 1 {
+		return fmt.Errorf("unsupported snapshot schema version %d", snapshot.SnapshotSchemaVersion)
+	}
+	if snapshot.BenchmarkContractVersion != types.BenchmarkContractVersionV11 {
+		return fmt.Errorf("unsupported benchmark contract version %q", snapshot.BenchmarkContractVersion)
+	}
+	dataset := snapshot.Dataset
+	if strings.TrimSpace(dataset.DatasetID) == "" {
+		return fmt.Errorf("dataset id is required")
+	}
+	if !lowercaseSHA256Pattern.MatchString(dataset.DatasetSemanticSHA256) {
+		return fmt.Errorf("dataset semantic hash must be 64 lowercase hexadecimal characters")
+	}
+	if dataset.CorpusCount <= 0 || dataset.QuestionCount <= 0 || dataset.QrelsCount <= 0 || dataset.AnswerCount <= 0 {
+		return fmt.Errorf("dataset counts must be positive")
+	}
+	if dataset.QrelsCount < dataset.QuestionCount {
+		return fmt.Errorf("qrels count must cover every question")
+	}
+	if dataset.AnswerCount < dataset.QuestionCount {
+		return fmt.Errorf("answer count must cover every question")
+	}
+	if dataset.CorpusMode != "pre_chunked_passages" || dataset.ChunkingApplied {
+		return fmt.Errorf("dataset must use the unchunked pre-chunked passage corpus")
+	}
+
+	tokenizer := snapshot.Pipeline.Tokenizer
+	if strings.TrimSpace(snapshot.Pipeline.Name) == "" {
+		return fmt.Errorf("pipeline name is required")
+	}
+	if tokenizer.Name != "jieba" {
+		return fmt.Errorf("tokenizer must be jieba")
+	}
+	switch tokenizer.DictionaryMode {
+	case "builtin":
+	case "custom":
+		if !lowercaseSHA256Pattern.MatchString(tokenizer.DictionaryFingerprint) {
+			return fmt.Errorf("custom tokenizer dictionary fingerprint must be 64 lowercase hexadecimal characters")
+		}
+	default:
+		return fmt.Errorf("unsupported tokenizer dictionary mode %q", tokenizer.DictionaryMode)
+	}
+
+	wantMetrics := []string{"precision", "recall", "ndcg", "mrr", "map", "bleu", "rouge"}
+	if !slices.Equal(snapshot.Pipeline.Metrics, wantMetrics) {
+		return fmt.Errorf("metric suite does not match Benchmark v1.1")
+	}
+	if !slices.Equal(snapshot.Pipeline.NDCGCutoffs, []int{3, 10}) {
+		return fmt.Errorf("NDCG cutoffs do not match Benchmark v1.1")
+	}
+	if snapshot.Execution.WorkerLimit <= 0 {
+		return fmt.Errorf("worker limit must be positive")
+	}
+
+	if strings.TrimSpace(snapshot.Models.EmbeddingModelID) == "" ||
+		strings.TrimSpace(snapshot.Models.ChatModelID) == "" ||
+		strings.TrimSpace(snapshot.Models.SummaryModelID) == "" {
+		return fmt.Errorf("required model ids are missing")
+	}
+	if err := validateConfiguredBenchmarkModel("embedding", snapshot.Models.Embedding, snapshot.Models.EmbeddingModelID); err != nil {
+		return err
+	}
+	if snapshot.Models.Embedding.Embedding == nil {
+		return fmt.Errorf("embedding model parameters are missing")
+	}
+	if err := validateConfiguredBenchmarkModel("chat", snapshot.Models.Chat, snapshot.Models.ChatModelID); err != nil {
+		return err
+	}
+	if err := validateConfiguredBenchmarkModel("summary", snapshot.Models.Summary, snapshot.Models.SummaryModelID); err != nil {
+		return err
+	}
+	if snapshot.Models.RerankModelID != nil {
+		if strings.TrimSpace(*snapshot.Models.RerankModelID) == "" {
+			return fmt.Errorf("rerank model id is empty")
+		}
+		if err := validateConfiguredBenchmarkModel("rerank", snapshot.Models.Rerank, *snapshot.Models.RerankModelID); err != nil {
+			return err
+		}
+	} else if snapshot.Models.Rerank != nil {
+		return fmt.Errorf("rerank model snapshot exists without an id")
+	}
+	return nil
+}
+
+func validateConfiguredBenchmarkModel(
+	role string, model *types.EvaluationConfiguredModelSnapshot, configuredID string,
+) error {
+	if model == nil {
+		return fmt.Errorf("%s model snapshot is missing", role)
+	}
+	if strings.TrimSpace(model.ID) == "" || strings.TrimSpace(model.Name) == "" ||
+		strings.TrimSpace(model.Type) == "" || strings.TrimSpace(model.Source) == "" {
+		return fmt.Errorf("%s model identity is incomplete", role)
+	}
+	if model.ID != configuredID {
+		return fmt.Errorf("%s model id does not match configured id", role)
+	}
+	if model.Source == string(types.ModelSourceRemote) && !lowercaseSHA256Pattern.MatchString(model.EndpointFingerprint) {
+		return fmt.Errorf("remote %s model endpoint fingerprint is missing or invalid", role)
+	}
+	return nil
 }

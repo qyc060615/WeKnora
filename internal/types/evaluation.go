@@ -126,13 +126,16 @@ type EvaluationModelsSnapshot struct {
 // EvaluationConfiguredModelSnapshot is an explicit secret-free allowlist.
 // Never replace it by serializing Model or ModelParameters wholesale.
 type EvaluationConfiguredModelSnapshot struct {
-	ID            string                       `json:"id"`
-	Name          string                       `json:"name"`
-	Type          string                       `json:"type"`
-	Source        string                       `json:"source"`
-	Provider      string                       `json:"provider"`
-	InterfaceType string                       `json:"interface_type"`
-	Embedding     *EvaluationEmbeddingSnapshot `json:"embedding,omitempty"`
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	Type          string `json:"type"`
+	Source        string `json:"source"`
+	Provider      string `json:"provider"`
+	InterfaceType string `json:"interface_type"`
+	// EndpointFingerprint identifies the effective network destination without
+	// persisting its URL, credentials, query parameters, or custom headers.
+	EndpointFingerprint string                       `json:"endpoint_fingerprint,omitempty"`
+	Embedding           *EvaluationEmbeddingSnapshot `json:"embedding,omitempty"`
 }
 
 type EvaluationEmbeddingSnapshot struct {

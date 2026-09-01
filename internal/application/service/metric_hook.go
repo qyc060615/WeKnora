@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/Tencent/WeKnora/internal/application/service/metric"
@@ -130,12 +132,27 @@ func (h *HookMetric) recordChatResponse(index int, chatResponse *types.ChatRespo
 	h.qaPairMetricList[index].chatResponse = chatResponse
 }
 
-// recordFinish finalizes metrics for a QA pair
-func (h *HookMetric) recordFinish(index int) {
+// recordFinish finalizes metrics for a QA pair. A missing model answer is an
+// evaluation failure, not a legitimate zero generation score.
+func (h *HookMetric) recordFinish(index int) error {
+	if index < 0 || index >= len(h.qaPairMetricList) || h.qaPairMetricList[index] == nil {
+		return fmt.Errorf("metric slot %d is not initialized", index)
+	}
+	item := h.qaPairMetricList[index]
+	if item.qaPair == nil {
+		return fmt.Errorf("metric slot %d has no QA pair", index)
+	}
+	if item.chatResponse == nil {
+		return fmt.Errorf("QA pair %d has no generated response", item.qaPair.QID)
+	}
+	if strings.TrimSpace(item.chatResponse.Content) == "" {
+		return fmt.Errorf("QA pair %d has empty generated response", item.qaPair.QID)
+	}
+
 	// Prepare retrieval source: prefer rerank results, fall back to search results
-	retrievalSource := h.qaPairMetricList[index].rerankResult
+	retrievalSource := item.rerankResult
 	if len(retrievalSource) == 0 {
-		retrievalSource = h.qaPairMetricList[index].searchResult
+		retrievalSource = item.searchResult
 	}
 
 	// Evaluation builds a sparse passage slice indexed by dataset PID.
@@ -143,23 +160,17 @@ func (h *HookMetric) recordFinish(index int) {
 	// retrieval/rerank pipeline carries it through on SearchResult. Copy every
 	// result in rank order: dropping unknown/non-relevant chunks or deduplicating
 	// them here would compress the ranking and inflate precision, MRR, and NDCG.
-	qaPair := h.qaPairMetricList[index].qaPair
+	qaPair := item.qaPair
 	retrievalIDs := make([]int, len(retrievalSource))
 	for i, result := range retrievalSource {
 		retrievalIDs[i] = result.ChunkIndex
-	}
-
-	// Get generated text if available
-	generatedTexts := ""
-	if h.qaPairMetricList[index].chatResponse != nil {
-		generatedTexts = h.qaPairMetricList[index].chatResponse.Content
 	}
 
 	// Prepare metric input data
 	metricInput := &types.MetricInput{
 		RetrievalGT:    [][]int{qaPair.PIDs},
 		RetrievalIDs:   retrievalIDs,
-		GeneratedTexts: generatedTexts,
+		GeneratedTexts: item.chatResponse.Content,
 		GeneratedGT:    qaPair.Answer,
 	}
 
@@ -167,6 +178,7 @@ func (h *HookMetric) recordFinish(index int) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.metricResults.Append(metricInput)
+	return nil
 }
 
 // MetricResult returns the averaged metric results

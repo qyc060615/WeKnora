@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -68,11 +69,11 @@ func (d *DatasetService) GetDatasetByID(ctx context.Context, datasetID string) (
 	if err != nil {
 		return nil, fmt.Errorf("load dataset %q: %w", datasetID, err)
 	}
-	dataset.PrintStats(ctx)
 	descriptor, err := dataset.describe(datasetID)
 	if err != nil {
 		return nil, fmt.Errorf("describe dataset %q: %w", datasetID, err)
 	}
+	dataset.PrintStats(ctx)
 
 	logger.Infof(ctx, "Retrieved %d corpus passages and %d QA pairs from dataset",
 		len(descriptor.Corpus), len(descriptor.QAPairs))
@@ -118,18 +119,35 @@ func loadDataset(datasetDir string) (dataset, error) {
 		qas:     make(map[int64]int64),   // qid -> aid
 	}
 	for _, qi := range queries {
+		if _, exists := res.queries[qi.ID]; exists {
+			return dataset{}, fmt.Errorf("duplicate query id %d", qi.ID)
+		}
 		res.queries[qi.ID] = qi.Text
 	}
 	for _, ci := range corpus {
+		if _, exists := res.corpus[ci.ID]; exists {
+			return dataset{}, fmt.Errorf("duplicate corpus id %d", ci.ID)
+		}
 		res.corpus[ci.ID] = ci.Text
 	}
 	for _, ai := range answers {
+		if _, exists := res.answers[ai.ID]; exists {
+			return dataset{}, fmt.Errorf("duplicate answer id %d", ai.ID)
+		}
 		res.answers[ai.ID] = ai.Text
 	}
+	seenQrels := make(map[RelsInfo]struct{}, len(qrels))
 	for _, ri := range qrels {
+		if _, exists := seenQrels[ri]; exists {
+			return dataset{}, fmt.Errorf("duplicate qrel (qid=%d, pid=%d)", ri.QID, ri.PID)
+		}
+		seenQrels[ri] = struct{}{}
 		res.qrels[ri.QID] = append(res.qrels[ri.QID], ri.PID)
 	}
 	for _, qi := range qas {
+		if _, exists := res.qas[qi.QID]; exists {
+			return dataset{}, fmt.Errorf("duplicate qas qid %d", qi.QID)
+		}
 		res.qas[qi.QID] = qi.AID
 	}
 	return res, nil
@@ -215,6 +233,9 @@ type datasetSemanticFacts struct {
 }
 
 func (d *dataset) describe(datasetID string) (*types.EvaluationDataset, error) {
+	if err := d.validate(); err != nil {
+		return nil, err
+	}
 	facts := d.semanticFacts()
 	canonical, err := json.Marshal(facts)
 	if err != nil {
@@ -241,6 +262,85 @@ func (d *dataset) describe(datasetID string) (*types.EvaluationDataset, error) {
 			QrelsCount: qrelsCount, AnswerCount: len(d.answers),
 		},
 	}, nil
+}
+
+// validate rejects malformed semantic data before it can be hashed or turned
+// into QA pairs. It deliberately checks text with TrimSpace without rewriting
+// the raw text that participates in the dataset identity.
+func (d *dataset) validate() error {
+	if len(d.queries) == 0 {
+		return errors.New("dataset has no queries")
+	}
+	if len(d.corpus) == 0 {
+		return errors.New("dataset has no corpus passages")
+	}
+	if len(d.answers) == 0 {
+		return errors.New("dataset has no answers")
+	}
+
+	for _, qid := range sortedInt64StringKeys(d.queries) {
+		if strings.TrimSpace(d.queries[qid]) == "" {
+			return fmt.Errorf("query %d has empty text", qid)
+		}
+		pids, exists := d.qrels[qid]
+		if !exists || len(pids) == 0 {
+			return fmt.Errorf("query %d has no qrels", qid)
+		}
+		if _, exists := d.qas[qid]; !exists {
+			return fmt.Errorf("query %d has no qas relation", qid)
+		}
+	}
+	for _, pid := range sortedInt64StringKeys(d.corpus) {
+		if strings.TrimSpace(d.corpus[pid]) == "" {
+			return fmt.Errorf("corpus passage %d has empty text", pid)
+		}
+	}
+	for _, aid := range sortedInt64StringKeys(d.answers) {
+		if strings.TrimSpace(d.answers[aid]) == "" {
+			return fmt.Errorf("answer %d has empty text", aid)
+		}
+	}
+
+	qrelQIDs := make([]int64, 0, len(d.qrels))
+	for qid := range d.qrels {
+		qrelQIDs = append(qrelQIDs, qid)
+	}
+	sort.Slice(qrelQIDs, func(i, j int) bool { return qrelQIDs[i] < qrelQIDs[j] })
+	for _, qid := range qrelQIDs {
+		if _, exists := d.queries[qid]; !exists {
+			return fmt.Errorf("qrels references unknown query %d", qid)
+		}
+		for _, pid := range d.qrels[qid] {
+			if _, exists := d.corpus[pid]; !exists {
+				return fmt.Errorf("qrel (qid=%d, pid=%d) references unknown corpus passage", qid, pid)
+			}
+		}
+	}
+
+	qaQIDs := make([]int64, 0, len(d.qas))
+	for qid := range d.qas {
+		qaQIDs = append(qaQIDs, qid)
+	}
+	sort.Slice(qaQIDs, func(i, j int) bool { return qaQIDs[i] < qaQIDs[j] })
+	for _, qid := range qaQIDs {
+		if _, exists := d.queries[qid]; !exists {
+			return fmt.Errorf("qas references unknown query %d", qid)
+		}
+		aid := d.qas[qid]
+		if _, exists := d.answers[aid]; !exists {
+			return fmt.Errorf("qas (qid=%d, aid=%d) references unknown answer", qid, aid)
+		}
+	}
+	return nil
+}
+
+func sortedInt64StringKeys(values map[int64]string) []int64 {
+	keys := make([]int64, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
+	return keys
 }
 
 func (d *dataset) semanticFacts() datasetSemanticFacts {
