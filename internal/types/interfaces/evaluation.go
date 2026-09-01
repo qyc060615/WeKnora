@@ -29,6 +29,12 @@ type EvaluationService interface {
 	EvaluationResult(ctx context.Context, taskID string) (*types.EvaluationDetail, error)
 }
 
+// BenchmarkResultService composes the unified internal Benchmark v1.1 result.
+// HTTP/API presentation is intentionally outside this contract.
+type BenchmarkResultService interface {
+	GetBenchmarkResult(ctx context.Context, taskID string) (*types.BenchmarkResult, error)
+}
+
 // Metrics defines interface for computing evaluation metrics
 type Metrics interface {
 	// Compute calculates metric score based on input data
@@ -43,6 +49,7 @@ type EvalHook interface {
 
 // DatasetService defines operations for dataset management
 type DatasetService interface {
-	// GetDatasetByID retrieves QA pairs from dataset by ID
-	GetDatasetByID(ctx context.Context, datasetID string) ([]*types.QAPair, error)
+	// GetDatasetByID retrieves the full candidate corpus, QA ground truth, and
+	// stable semantic identity for a dataset.
+	GetDatasetByID(ctx context.Context, datasetID string) (*types.EvaluationDataset, error)
 }

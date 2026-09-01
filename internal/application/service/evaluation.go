@@ -163,6 +163,10 @@ func (e *EvaluationService) Evaluation(ctx context.Context,
 		datasetID = "default"
 		logger.Info(ctx, "Using default dataset")
 	}
+	evaluationDataset, err := e.dataset.GetDatasetByID(ctx, datasetID)
+	if err != nil {
+		return nil, err
+	}
 
 	if rerankModelID == "" {
 		// 获取默认的重排模型
@@ -204,6 +208,17 @@ func (e *EvaluationService) Evaluation(ctx context.Context,
 		}
 		logger.Infof(ctx, "Using default chat model: %s", chatModelID)
 	}
+	modelSnapshots, err := loadEvaluationModelSnapshots(
+		ctx, e.modelService, embeddingModelID, chatModelID, rerankModelID, summaryModelID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	tokenizerSnapshot, err := evaluationTokenizerSnapshot()
+	if err != nil {
+		return nil, err
+	}
+	workerLimit := evaluationWorkerLimit()
 
 	// Create evaluation task with unique ID
 	logger.Info(ctx, "Creating evaluation task")
@@ -255,7 +270,8 @@ func (e *EvaluationService) Evaluation(ctx context.Context,
 		retrieveDriver = e.config.VectorDatabase.Driver
 	}
 	snapshot := evaluationSnapshot(
-		detail, sourceKnowledgeBaseID, embeddingModelID, summaryModelID, retrieveDriver,
+		detail, evaluationDataset.Identity, sourceKnowledgeBaseID, modelSnapshots,
+		retrieveDriver, tokenizerSnapshot, workerLimit,
 	)
 	run := &types.EvaluationRun{
 		TaskID: taskID, TenantID: tenantID, DatasetID: datasetID,
@@ -295,7 +311,9 @@ func (e *EvaluationService) Evaluation(ctx context.Context,
 		logger.Info(newCtx, "Evaluation task status set to running")
 
 		// Execute actual evaluation
-		if err := e.EvalDataset(newCtx, workerDetail, knowledgeBaseID); err != nil {
+		if err := e.EvalDataset(
+			newCtx, workerDetail, knowledgeBaseID, evaluationDataset, snapshot.Execution.WorkerLimit,
+		); err != nil {
 			workerDetail.Task.Status = types.EvaluationStatueFailed
 			workerDetail.Task.ErrMsg = err.Error()
 			if persistErr := e.evaluationRunRepository.MarkFailed(
@@ -330,31 +348,34 @@ func (e *EvaluationService) Evaluation(ctx context.Context,
 
 // EvalDataset performs the actual evaluation of a dataset
 // Processes each QA pair in parallel and records metrics
-func (e *EvaluationService) EvalDataset(ctx context.Context, detail *types.EvaluationDetail, knowledgeBaseID string) error {
+func (e *EvaluationService) EvalDataset(
+	ctx context.Context,
+	detail *types.EvaluationDetail,
+	knowledgeBaseID string,
+	dataset *types.EvaluationDataset,
+	workerLimit int,
+) error {
 	logger.Info(ctx, "Start evaluating dataset")
 	logger.Infof(ctx, "Task ID: %s, Dataset ID: %s", detail.Task.ID, detail.Task.DatasetID)
 
-	// Retrieve dataset from storage
-	dataset, err := e.dataset.GetDatasetByID(ctx, detail.Task.DatasetID)
-	if err != nil {
-		logger.Errorf(ctx, "Failed to get dataset: %v", err)
-		return err
+	if dataset == nil {
+		return fmt.Errorf("evaluation dataset is required")
 	}
-	logger.Infof(ctx, "Dataset retrieved successfully with %d QA pairs", len(dataset))
+	logger.Infof(ctx, "Dataset ready with %d corpus passages and %d QA pairs",
+		len(dataset.Corpus), len(dataset.QAPairs))
 
 	if err := e.evaluationRunRepository.UpdateTotal(
-		ctx, detail.Task.TenantID, detail.Task.ID, len(dataset),
+		ctx, detail.Task.TenantID, detail.Task.ID, len(dataset.QAPairs),
 	); err != nil {
 		return fmt.Errorf("persist evaluation total: %w", err)
 	}
-	detail.Task.Total = len(dataset)
+	detail.Task.Total = len(dataset.QAPairs)
 
-	// Extract and organize passages from dataset
-	passages := getPassageList(dataset)
-	logger.Infof(ctx, "Creating knowledge from %d passages", len(passages))
-
-	// Create knowledge base from passages (sync: wait for indexing to complete before querying)
-	knowledge, err := e.knowledgeService.CreateKnowledgeFromPassageSync(ctx, knowledgeBaseID, passages, "")
+	// Create knowledge from the complete candidate corpus. QAPair.PIDs remain
+	// ground truth only and are intentionally absent from this call path.
+	knowledge, err := createEvaluationKnowledge(
+		ctx, knowledgeBaseID, dataset.Corpus, e.knowledgeService.CreateKnowledgeFromPassageSync,
+	)
 	if err != nil {
 		logger.Errorf(ctx, "Failed to create knowledge from passages: %v", err)
 		return err
@@ -380,14 +401,17 @@ func (e *EvaluationService) EvalDataset(ctx context.Context, detail *types.Evalu
 
 	// Initialize parallel evaluation metrics
 	var g errgroup.Group
-	metricHook := NewHookMetric(len(dataset))
+	metricHook := NewHookMetric(len(dataset.QAPairs))
 
-	// Set worker limit based on available CPUs
-	g.SetLimit(max(runtime.GOMAXPROCS(0)-1, 1))
-	logger.Infof(ctx, "Starting evaluation with %d parallel workers", max(runtime.GOMAXPROCS(0)-1, 1))
+	if workerLimit <= 0 {
+		return fmt.Errorf("evaluation worker limit must be positive")
+	}
+	// The worker limit was frozen into the run snapshot at creation time.
+	g.SetLimit(workerLimit)
+	logger.Infof(ctx, "Starting evaluation with %d parallel workers", workerLimit)
 
 	// Process each QA pair in parallel
-	for i, qaPair := range dataset {
+	for i, qaPair := range dataset.QAPairs {
 		qaPair := qaPair
 		i := i
 		g.Go(func() error {
@@ -448,31 +472,34 @@ func (e *EvaluationService) EvalDataset(ctx context.Context, detail *types.Evalu
 
 func evaluationSnapshot(
 	detail *types.EvaluationDetail,
+	datasetIdentity types.EvaluationDatasetIdentity,
 	sourceKnowledgeBaseID *string,
-	embeddingModelID, summaryModelID, retrieveDriver string,
+	models types.EvaluationModelsSnapshot,
+	retrieveDriver string,
+	tokenizer types.EvaluationTokenizerSnapshot,
+	workerLimit int,
 ) types.EvaluationConfigSnapshotV1 {
 	params := detail.Params
-	var rerankModelID *string
-	if params.RerankModelID != "" {
-		id := params.RerankModelID
-		rerankModelID = &id
-	}
 	snapshot := types.EvaluationConfigSnapshotV1{
-		SnapshotSchemaVersion: 1,
-		Dataset:               types.EvaluationDatasetSnapshot{DatasetID: detail.Task.DatasetID},
+		SnapshotSchemaVersion: 1, BenchmarkContractVersion: types.BenchmarkContractVersionV11,
+		Dataset: types.EvaluationDatasetSnapshot{
+			DatasetID:             datasetIdentity.DatasetID,
+			DatasetSemanticSHA256: datasetIdentity.DatasetSemanticSHA256,
+			CorpusCount:           datasetIdentity.CorpusCount, QuestionCount: datasetIdentity.QuestionCount,
+			QrelsCount: datasetIdentity.QrelsCount, AnswerCount: datasetIdentity.AnswerCount,
+			CorpusMode: "pre_chunked_passages", ChunkingApplied: false,
+		},
+		Execution: types.EvaluationExecutionSnapshot{WorkerLimit: workerLimit},
 		Pipeline: types.EvaluationPipelineSnapshot{
 			Name: "rag", Metrics: []string{"precision", "recall", "ndcg", "mrr", "map", "bleu", "rouge"},
-			NDCGCutoffs: []int{3, 10},
+			NDCGCutoffs: []int{3, 10}, Tokenizer: tokenizer,
 		},
 		Retrieval: types.EvaluationRetrievalSnapshot{
 			VectorThreshold: params.VectorThreshold, KeywordThreshold: params.KeywordThreshold,
 			EmbeddingTopK: params.EmbeddingTopK, RerankTopK: params.RerankTopK,
 			RerankThreshold: params.RerankThreshold, RetrieveDriver: retrieveDriver,
 		},
-		Models: types.EvaluationModelsSnapshot{
-			EmbeddingModelID: embeddingModelID, ChatModelID: params.ChatModelID,
-			RerankModelID: rerankModelID, SummaryModelID: summaryModelID,
-		},
+		Models: models,
 		Generation: types.EvaluationGenerationSnapshot{
 			MaxRounds: params.MaxRounds, SummaryConfig: params.SummaryConfig,
 			FallbackResponse: params.FallbackResponse, RewritePromptSystem: params.RewritePromptSystem,
@@ -481,7 +508,8 @@ func evaluationSnapshot(
 	}
 	if sourceKnowledgeBaseID != nil {
 		snapshot.SourceKnowledgeBase = &types.EvaluationSourceKBSnapshot{
-			ID: *sourceKnowledgeBaseID, EmbeddingModelID: embeddingModelID, SummaryModelID: summaryModelID,
+			ID:               *sourceKnowledgeBaseID,
+			EmbeddingModelID: models.EmbeddingModelID, SummaryModelID: models.SummaryModelID,
 		}
 	}
 	return snapshot
@@ -535,16 +563,44 @@ func evaluationRunMetric(run *types.EvaluationRun) *types.MetricResult {
 	}
 }
 
-// getPassageList extracts and organizes passages from QA pairs
-// Returns a slice of passages indexed by their passage IDs
-func getPassageList(dataset []*types.QAPair) []string {
-	pIDMap := make(map[int]string)
+func evaluationWorkerLimit() int { return max(runtime.GOMAXPROCS(0)-1, 1) }
+
+type evaluationPassageCreator func(
+	context.Context, string, []string, string,
+) (*types.Knowledge, error)
+
+func createEvaluationKnowledge(
+	ctx context.Context,
+	knowledgeBaseID string,
+	corpus []types.EvaluationPassage,
+	create evaluationPassageCreator,
+) (*types.Knowledge, error) {
+	passages, err := getCorpusPassageList(corpus)
+	if err != nil {
+		return nil, err
+	}
+	logger.Infof(ctx, "Creating knowledge from %d passages", len(passages))
+	return create(ctx, knowledgeBaseID, passages, "")
+}
+
+// getCorpusPassageList returns the complete corpus indexed by dataset PID.
+// Empty gaps preserve sparse PID -> ChunkIndex identity; duplicate or negative
+// PIDs are rejected instead of silently corrupting the mapping.
+func getCorpusPassageList(corpus []types.EvaluationPassage) ([]string, error) {
+	pIDMap := make(map[int]string, len(corpus))
 	maxPID := 0
-	for _, qaPair := range dataset {
-		for i := 0; i < len(qaPair.PIDs); i++ {
-			pIDMap[qaPair.PIDs[i]] = qaPair.Passages[i]
-			maxPID = max(maxPID, qaPair.PIDs[i])
+	for _, passage := range corpus {
+		if passage.PID < 0 {
+			return nil, fmt.Errorf("evaluation corpus PID must be non-negative: %d", passage.PID)
 		}
+		if _, exists := pIDMap[passage.PID]; exists {
+			return nil, fmt.Errorf("duplicate evaluation corpus PID: %d", passage.PID)
+		}
+		pIDMap[passage.PID] = passage.Text
+		maxPID = max(maxPID, passage.PID)
+	}
+	if len(corpus) == 0 {
+		return []string{}, nil
 	}
 	passages := make([]string, maxPID+1)
 	for i := 0; i <= maxPID; i++ {
@@ -552,5 +608,5 @@ func getPassageList(dataset []*types.QAPair) []string {
 			passages[i] = pIDMap[i]
 		}
 	}
-	return passages
+	return passages, nil
 }

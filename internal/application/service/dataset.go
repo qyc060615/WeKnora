@@ -2,6 +2,9 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -46,8 +49,9 @@ type QaInfo struct {
 	AID int64 `parquet:"aid"` // Answer ID
 }
 
-// GetDatasetByID retrieves QA pairs from dataset by ID
-func (d *DatasetService) GetDatasetByID(ctx context.Context, datasetID string) ([]*types.QAPair, error) {
+// GetDatasetByID retrieves the complete candidate corpus independently from
+// qrels, plus QA ground truth and a deterministic semantic identity.
+func (d *DatasetService) GetDatasetByID(ctx context.Context, datasetID string) (*types.EvaluationDataset, error) {
 	logger.Info(ctx, "Start getting dataset by ID")
 	logger.Infof(ctx, "Getting dataset with ID: %s", datasetID)
 
@@ -65,10 +69,14 @@ func (d *DatasetService) GetDatasetByID(ctx context.Context, datasetID string) (
 		return nil, fmt.Errorf("load dataset %q: %w", datasetID, err)
 	}
 	dataset.PrintStats(ctx)
-	qaPairs := dataset.Iterate()
+	descriptor, err := dataset.describe(datasetID)
+	if err != nil {
+		return nil, fmt.Errorf("describe dataset %q: %w", datasetID, err)
+	}
 
-	logger.Infof(ctx, "Retrieved %d QA pairs from dataset", len(qaPairs))
-	return qaPairs, nil
+	logger.Infof(ctx, "Retrieved %d corpus passages and %d QA pairs from dataset",
+		len(descriptor.Corpus), len(descriptor.QAPairs))
+	return descriptor, nil
 }
 
 // DefaultDataset loads and initializes the default dataset from parquet files
@@ -161,22 +169,111 @@ func (d *dataset) Iterate() []*types.QAPair {
 		for _, pid := range pids {
 			pidStr = append(pidStr, int(pid))
 		}
-		var passages []string
-		for _, pid := range pids {
-			passages = append(passages, d.corpus[pid])
-		}
-
 		pairs = append(pairs, &types.QAPair{
 			QID:      int(qid),
 			Question: question,
 			PIDs:     pidStr,
-			Passages: passages,
 			AID:      int(aid),
 			Answer:   answer,
 		})
 	}
 
 	return pairs
+}
+
+type datasetSemanticCorpusFact struct {
+	PID  int64  `json:"pid"`
+	Text string `json:"text"`
+}
+
+type datasetSemanticQueryFact struct {
+	QID      int64  `json:"qid"`
+	Question string `json:"question"`
+}
+
+type datasetSemanticQrelFact struct {
+	QID  int64   `json:"qid"`
+	PIDs []int64 `json:"pids"`
+}
+
+type datasetSemanticAnswerFact struct {
+	AID    int64  `json:"aid"`
+	Answer string `json:"answer"`
+}
+
+type datasetSemanticQAFact struct {
+	QID int64 `json:"qid"`
+	AID int64 `json:"aid"`
+}
+
+type datasetSemanticFacts struct {
+	Corpus  []datasetSemanticCorpusFact `json:"corpus"`
+	Queries []datasetSemanticQueryFact  `json:"queries"`
+	Qrels   []datasetSemanticQrelFact   `json:"qrels"`
+	Answers []datasetSemanticAnswerFact `json:"answers"`
+	QAs     []datasetSemanticQAFact     `json:"qas"`
+}
+
+func (d *dataset) describe(datasetID string) (*types.EvaluationDataset, error) {
+	facts := d.semanticFacts()
+	canonical, err := json.Marshal(facts)
+	if err != nil {
+		return nil, fmt.Errorf("marshal semantic facts: %w", err)
+	}
+	digest := sha256.Sum256(canonical)
+
+	corpus := make([]types.EvaluationPassage, len(facts.Corpus))
+	for i, passage := range facts.Corpus {
+		corpus[i] = types.EvaluationPassage{PID: int(passage.PID), Text: passage.Text}
+	}
+	qrelsCount := 0
+	for _, qrel := range facts.Qrels {
+		qrelsCount += len(qrel.PIDs)
+	}
+
+	return &types.EvaluationDataset{
+		ID:      datasetID,
+		Corpus:  corpus,
+		QAPairs: d.Iterate(),
+		Identity: types.EvaluationDatasetIdentity{
+			DatasetID: datasetID, DatasetSemanticSHA256: hex.EncodeToString(digest[:]),
+			CorpusCount: len(d.corpus), QuestionCount: len(d.queries),
+			QrelsCount: qrelsCount, AnswerCount: len(d.answers),
+		},
+	}, nil
+}
+
+func (d *dataset) semanticFacts() datasetSemanticFacts {
+	facts := datasetSemanticFacts{
+		Corpus:  make([]datasetSemanticCorpusFact, 0, len(d.corpus)),
+		Queries: make([]datasetSemanticQueryFact, 0, len(d.queries)),
+		Qrels:   make([]datasetSemanticQrelFact, 0, len(d.qrels)),
+		Answers: make([]datasetSemanticAnswerFact, 0, len(d.answers)),
+		QAs:     make([]datasetSemanticQAFact, 0, len(d.qas)),
+	}
+	for pid, content := range d.corpus {
+		facts.Corpus = append(facts.Corpus, datasetSemanticCorpusFact{PID: pid, Text: content})
+	}
+	for qid, question := range d.queries {
+		facts.Queries = append(facts.Queries, datasetSemanticQueryFact{QID: qid, Question: question})
+	}
+	for qid, pids := range d.qrels {
+		ordered := append([]int64(nil), pids...)
+		sort.Slice(ordered, func(i, j int) bool { return ordered[i] < ordered[j] })
+		facts.Qrels = append(facts.Qrels, datasetSemanticQrelFact{QID: qid, PIDs: ordered})
+	}
+	for aid, answer := range d.answers {
+		facts.Answers = append(facts.Answers, datasetSemanticAnswerFact{AID: aid, Answer: answer})
+	}
+	for qid, aid := range d.qas {
+		facts.QAs = append(facts.QAs, datasetSemanticQAFact{QID: qid, AID: aid})
+	}
+	sort.Slice(facts.Corpus, func(i, j int) bool { return facts.Corpus[i].PID < facts.Corpus[j].PID })
+	sort.Slice(facts.Queries, func(i, j int) bool { return facts.Queries[i].QID < facts.Queries[j].QID })
+	sort.Slice(facts.Qrels, func(i, j int) bool { return facts.Qrels[i].QID < facts.Qrels[j].QID })
+	sort.Slice(facts.Answers, func(i, j int) bool { return facts.Answers[i].AID < facts.Answers[j].AID })
+	sort.Slice(facts.QAs, func(i, j int) bool { return facts.QAs[i].QID < facts.QAs[j].QID })
+	return facts
 }
 
 // GetContextForQID retrieves context passages for a given question ID

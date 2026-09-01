@@ -11,7 +11,13 @@ import (
 )
 
 type modelUsageAggregationRow struct {
-	CallType types.CallType
+	CallType          types.CallType
+	ModelID           string
+	ModelName         string
+	ModelType         string
+	ModelSource       string
+	ResolvedProvider  string
+	ResolvedModelName *string
 
 	InputTokens  *int
 	OutputTokens *int
@@ -53,7 +59,8 @@ func (r *modelUsageRepository) AggregateEvaluationRun(ctx context.Context, tenan
 	}
 	var rows []modelUsageAggregationRow
 	err := r.db.WithContext(ctx).Table("model_usage AS u").
-		Select(`u.call_type,
+		Select(`u.call_type, u.model_id, u.model_name, u.model_type, u.model_source,
+			u.resolved_provider, u.resolved_model_name,
 			u.input_tokens, u.output_tokens, u.total_tokens, u.latency_ms,
 			u.prompt_cache_status, u.cache_read_tokens, u.cache_write_tokens, u.cache_miss_tokens,
 			u.embedding_cache_status, u.logical_requests, u.provider_requests, u.provider_inputs,
@@ -68,13 +75,18 @@ func (r *modelUsageRepository) AggregateEvaluationRun(ctx context.Context, tenan
 		return nil, fmt.Errorf("aggregate model usage for evaluation run: %w", err)
 	}
 
-	result := &types.EvaluationModelUsageAggregate{CostByCurrency: make([]types.CurrencyCostAggregate, 0)}
+	result := &types.EvaluationModelUsageAggregate{
+		ObservedModels: make([]types.ObservedModelIdentity, 0),
+		CostByCurrency: make([]types.CurrencyCostAggregate, 0),
+	}
 	costs := make(map[string]*currencyCostAccumulator)
+	observedModels := make(map[observedModelKey]int64)
 	for i := range rows {
 		row := &rows[i]
 		if err := aggregateUsageRow(result, costs, row); err != nil {
 			return nil, fmt.Errorf("aggregate model usage for evaluation run: %w", err)
 		}
+		observedModels[observedModelKeyFromRow(row)]++
 	}
 	finishNullableMetric(&result.InputTokens)
 	finishNullableMetric(&result.OutputTokens)
@@ -96,7 +108,68 @@ func (r *modelUsageRepository) AggregateEvaluationRun(ctx context.Context, tenan
 		}
 		result.CostByCurrency = append(result.CostByCurrency, item)
 	}
+	result.ObservedModels = finishObservedModels(observedModels)
 	return result, nil
+}
+
+type observedModelKey struct {
+	CallType          types.CallType
+	ModelID           string
+	ModelName         string
+	ModelType         string
+	ModelSource       string
+	ResolvedProvider  string
+	ResolvedModelName string
+	ResolvedNameKnown bool
+}
+
+func observedModelKeyFromRow(row *modelUsageAggregationRow) observedModelKey {
+	key := observedModelKey{
+		CallType: row.CallType, ModelID: row.ModelID, ModelName: row.ModelName,
+		ModelType: row.ModelType, ModelSource: row.ModelSource, ResolvedProvider: row.ResolvedProvider,
+	}
+	if row.ResolvedModelName != nil {
+		key.ResolvedModelName = *row.ResolvedModelName
+		key.ResolvedNameKnown = true
+	}
+	return key
+}
+
+func finishObservedModels(groups map[observedModelKey]int64) []types.ObservedModelIdentity {
+	keys := make([]observedModelKey, 0, len(groups))
+	for key := range groups {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		left, right := keys[i], keys[j]
+		leftFields := []string{string(left.CallType), left.ModelID, left.ModelName, left.ModelType, left.ModelSource, left.ResolvedProvider}
+		rightFields := []string{string(right.CallType), right.ModelID, right.ModelName, right.ModelType, right.ModelSource, right.ResolvedProvider}
+		for index := range leftFields {
+			if leftFields[index] != rightFields[index] {
+				return leftFields[index] < rightFields[index]
+			}
+		}
+		if left.ResolvedNameKnown != right.ResolvedNameKnown {
+			return !left.ResolvedNameKnown
+		}
+		return left.ResolvedModelName < right.ResolvedModelName
+	})
+
+	result := make([]types.ObservedModelIdentity, 0, len(keys))
+	for _, key := range keys {
+		var resolvedModelName *string
+		if key.ResolvedNameKnown {
+			value := key.ResolvedModelName
+			resolvedModelName = &value
+		}
+		result = append(result, types.ObservedModelIdentity{
+			CallType: key.CallType, ModelID: key.ModelID, ModelName: key.ModelName,
+			ModelType: key.ModelType, ModelSource: key.ModelSource,
+			ResolvedProvider: key.ResolvedProvider, ResolvedModelName: resolvedModelName,
+			Calls: groups[key],
+		})
+	}
+	return result
 }
 
 func aggregateUsageRow(result *types.EvaluationModelUsageAggregate, costs map[string]*currencyCostAccumulator, row *modelUsageAggregationRow) error {

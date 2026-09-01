@@ -57,6 +57,20 @@ type LatencyAggregate struct {
 	ApplicableCalls int64    `json:"applicable_calls"`
 }
 
+// ObservedModelIdentity groups call-time model identity facts without copying
+// them into evaluation_runs. Calls is the number of model_usage rows in the
+// group, consistent with the one-row-per-logical-invocation contract.
+type ObservedModelIdentity struct {
+	CallType          CallType `json:"call_type"`
+	ModelID           string   `json:"model_id"`
+	ModelName         string   `json:"model_name"`
+	ModelType         string   `json:"model_type"`
+	ModelSource       string   `json:"model_source"`
+	ResolvedProvider  string   `json:"resolved_provider"`
+	ResolvedModelName *string  `json:"resolved_model_name"`
+	Calls             int64    `json:"calls"`
+}
+
 // CallTypeCostAggregate keeps fully-priced totals separate from all known
 // components. KnownCost can therefore include the determined portion of a
 // partial cost row without presenting it as fully priced.
@@ -92,6 +106,7 @@ type EvaluationModelUsageAggregate struct {
 	PromptCache      PromptCacheStatusCounts    `json:"prompt_cache_statuses"`
 	EmbeddingCache   EmbeddingCacheStatusCounts `json:"embedding_cache_statuses"`
 	Latency          LatencyAggregate           `json:"latency"`
+	ObservedModels   []ObservedModelIdentity    `json:"observed_models"`
 
 	CostByCurrency          []CurrencyCostAggregate `json:"cost_by_currency"`
 	NoCostRowCalls          CallCounts              `json:"no_cost_row_calls"`

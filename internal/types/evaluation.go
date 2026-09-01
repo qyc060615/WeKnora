@@ -40,6 +40,8 @@ const (
 	EvaluationStatueFailed                          // Task failed
 )
 
+const BenchmarkContractVersionV11 = "v1.1"
+
 // EvaluationTask contains information about an evaluation task
 type EvaluationTask struct {
 	ID        string `json:"id"`         // Unique task ID
@@ -65,23 +67,39 @@ type EvaluationDetail struct {
 // to explain and reconstruct the effective configuration of an evaluation.
 // It intentionally does not embed Model, ModelParameters, or global Config.
 type EvaluationConfigSnapshotV1 struct {
-	SnapshotSchemaVersion int                          `json:"snapshot_schema_version"`
-	Dataset               EvaluationDatasetSnapshot    `json:"dataset"`
-	Pipeline              EvaluationPipelineSnapshot   `json:"pipeline"`
-	Retrieval             EvaluationRetrievalSnapshot  `json:"retrieval"`
-	Models                EvaluationModelsSnapshot     `json:"models"`
-	SourceKnowledgeBase   *EvaluationSourceKBSnapshot  `json:"source_knowledge_base,omitempty"`
-	Generation            EvaluationGenerationSnapshot `json:"generation"`
+	SnapshotSchemaVersion    int                          `json:"snapshot_schema_version"`
+	BenchmarkContractVersion string                       `json:"benchmark_contract_version,omitempty"`
+	Dataset                  EvaluationDatasetSnapshot    `json:"dataset"`
+	Pipeline                 EvaluationPipelineSnapshot   `json:"pipeline"`
+	Retrieval                EvaluationRetrievalSnapshot  `json:"retrieval"`
+	Models                   EvaluationModelsSnapshot     `json:"models"`
+	SourceKnowledgeBase      *EvaluationSourceKBSnapshot  `json:"source_knowledge_base,omitempty"`
+	Generation               EvaluationGenerationSnapshot `json:"generation"`
+	Execution                EvaluationExecutionSnapshot  `json:"execution"`
 }
 
 type EvaluationDatasetSnapshot struct {
-	DatasetID string `json:"dataset_id"`
+	DatasetID             string `json:"dataset_id"`
+	DatasetSemanticSHA256 string `json:"dataset_semantic_sha256,omitempty"`
+	CorpusCount           int    `json:"corpus_count,omitempty"`
+	QuestionCount         int    `json:"question_count,omitempty"`
+	QrelsCount            int    `json:"qrels_count,omitempty"`
+	AnswerCount           int    `json:"answer_count,omitempty"`
+	CorpusMode            string `json:"corpus_mode,omitempty"`
+	ChunkingApplied       bool   `json:"chunking_applied"`
 }
 
 type EvaluationPipelineSnapshot struct {
-	Name        string   `json:"name"`
-	Metrics     []string `json:"metrics"`
-	NDCGCutoffs []int    `json:"ndcg_cutoffs"`
+	Name        string                      `json:"name"`
+	Metrics     []string                    `json:"metrics"`
+	NDCGCutoffs []int                       `json:"ndcg_cutoffs"`
+	Tokenizer   EvaluationTokenizerSnapshot `json:"tokenizer"`
+}
+
+type EvaluationTokenizerSnapshot struct {
+	Name                  string `json:"name"`
+	DictionaryMode        string `json:"dictionary_mode"`
+	DictionaryFingerprint string `json:"dictionary_fingerprint,omitempty"`
 }
 
 type EvaluationRetrievalSnapshot struct {
@@ -98,6 +116,29 @@ type EvaluationModelsSnapshot struct {
 	ChatModelID      string  `json:"chat_model_id"`
 	RerankModelID    *string `json:"rerank_model_id,omitempty"`
 	SummaryModelID   string  `json:"summary_model_id,omitempty"`
+
+	Embedding *EvaluationConfiguredModelSnapshot `json:"embedding,omitempty"`
+	Chat      *EvaluationConfiguredModelSnapshot `json:"chat,omitempty"`
+	Rerank    *EvaluationConfiguredModelSnapshot `json:"rerank,omitempty"`
+	Summary   *EvaluationConfiguredModelSnapshot `json:"summary,omitempty"`
+}
+
+// EvaluationConfiguredModelSnapshot is an explicit secret-free allowlist.
+// Never replace it by serializing Model or ModelParameters wholesale.
+type EvaluationConfiguredModelSnapshot struct {
+	ID            string                       `json:"id"`
+	Name          string                       `json:"name"`
+	Type          string                       `json:"type"`
+	Source        string                       `json:"source"`
+	Provider      string                       `json:"provider"`
+	InterfaceType string                       `json:"interface_type"`
+	Embedding     *EvaluationEmbeddingSnapshot `json:"embedding,omitempty"`
+}
+
+type EvaluationEmbeddingSnapshot struct {
+	Dimension                 int  `json:"dimension"`
+	TruncatePromptTokens      int  `json:"truncate_prompt_tokens"`
+	SupportsDimensionOverride bool `json:"supports_dimension_override"`
 }
 
 type EvaluationSourceKBSnapshot struct {
@@ -112,6 +153,10 @@ type EvaluationGenerationSnapshot struct {
 	FallbackResponse    string        `json:"fallback_response"`
 	RewritePromptSystem string        `json:"rewrite_prompt_system"`
 	RewritePromptUser   string        `json:"rewrite_prompt_user"`
+}
+
+type EvaluationExecutionSnapshot struct {
+	WorkerLimit int `json:"worker_limit"`
 }
 
 func (s EvaluationConfigSnapshotV1) Value() (driver.Value, error) { return json.Marshal(s) }

@@ -36,8 +36,55 @@ func TestAggregateEvaluationRunSingleCallTypes(t *testing.T) {
 			require.NotNil(t, got.InputTokens.Sum)
 			require.Zero(t, *got.InputTokens.Sum, "explicit zero must remain observed")
 			require.Equal(t, int64(1), got.NoCostRowCalls.Total)
+			require.Len(t, got.ObservedModels, 1)
+			require.Equal(t, callType, got.ObservedModels[0].CallType)
+			require.Equal(t, int64(1), got.ObservedModels[0].Calls)
 		})
 	}
+}
+
+func TestAggregateEvaluationRunObservedModels(t *testing.T) {
+	db := newModelUsageFKTestDB(t)
+	repo := NewModelUsageRepository(db)
+	ctx := context.Background()
+	runID := uuid.NewString()
+	insertEvaluationRun(t, db, runID, 42)
+
+	newUsage := func(callType types.CallType, resolved *string) *types.ModelUsage {
+		usage := aggregationUsage(42, runID, callType)
+		usage.ModelID = "configured-model"
+		usage.ModelName = "configured-name"
+		usage.ModelSource = "test-source"
+		usage.ResolvedProvider = "test-provider"
+		usage.ResolvedModelName = resolved
+		return usage
+	}
+	resolved := "runtime-model"
+	resolvedAlternative := "runtime-model-b"
+	for _, usage := range []*types.ModelUsage{
+		newUsage(types.CallTypeChat, &resolved),
+		newUsage(types.CallTypeEmbedding, &resolved),
+		newUsage(types.CallTypeChat, nil),
+		newUsage(types.CallTypeChat, &resolved),
+		newUsage(types.CallTypeChat, &resolvedAlternative),
+		newUsage(types.CallTypeRerank, &resolved),
+	} {
+		require.NoError(t, repo.Create(ctx, usage))
+	}
+
+	got, err := repo.AggregateEvaluationRun(ctx, 42, runID)
+	require.NoError(t, err)
+	require.Len(t, got.ObservedModels, 5)
+	require.Equal(t, types.CallTypeChat, got.ObservedModels[0].CallType)
+	require.Nil(t, got.ObservedModels[0].ResolvedModelName)
+	require.Equal(t, int64(1), got.ObservedModels[0].Calls)
+	require.Equal(t, types.CallTypeChat, got.ObservedModels[1].CallType)
+	require.Equal(t, "runtime-model", *got.ObservedModels[1].ResolvedModelName)
+	require.Equal(t, int64(2), got.ObservedModels[1].Calls, "calls must count model_usage rows")
+	require.Equal(t, "runtime-model-b", *got.ObservedModels[2].ResolvedModelName)
+	require.Equal(t, int64(1), got.ObservedModels[2].Calls)
+	require.Equal(t, types.CallTypeEmbedding, got.ObservedModels[3].CallType)
+	require.Equal(t, types.CallTypeRerank, got.ObservedModels[4].CallType)
 }
 
 func TestAggregateEvaluationRunNullCoverageStatusesAndIsolation(t *testing.T) {
@@ -225,7 +272,9 @@ func TestAggregateEvaluationRunPostgreSQLQueryAndExactScan(t *testing.T) {
 	require.NoError(t, err)
 
 	columns := []string{
-		"call_type", "input_tokens", "output_tokens", "total_tokens", "latency_ms",
+		"call_type", "model_id", "model_name", "model_type", "model_source",
+		"resolved_provider", "resolved_model_name",
+		"input_tokens", "output_tokens", "total_tokens", "latency_ms",
 		"prompt_cache_status", "cache_read_tokens", "cache_write_tokens", "cache_miss_tokens",
 		"embedding_cache_status", "logical_requests", "provider_requests", "provider_inputs",
 		"provider_pairs", "embedding_inputs", "cache_hits", "cache_misses", "cache_read_errors",
@@ -233,7 +282,8 @@ func TestAggregateEvaluationRunPostgreSQLQueryAndExactScan(t *testing.T) {
 		"cost_currency", "total_cost", "known_cost",
 	}
 	rows := sqlmock.NewRows(columns).AddRow(
-		"chat", 1, 2, 3, 4,
+		"chat", "model-pg", "Model PG", "knowledge_qa", "openai", "openai", "runtime-pg",
+		1, 2, 3, 4,
 		nil, nil, nil, nil,
 		nil, 1, 1, 0,
 		0, 0, 0, 0, 0,
@@ -246,6 +296,7 @@ func TestAggregateEvaluationRunPostgreSQLQueryAndExactScan(t *testing.T) {
 	got, err := NewModelUsageRepository(db).AggregateEvaluationRun(context.Background(), 91, "run-pg")
 	require.NoError(t, err)
 	require.Equal(t, types.CallCounts{Total: 1, Chat: 1}, got.Calls)
+	require.Equal(t, "runtime-pg", *got.ObservedModels[0].ResolvedModelName)
 	require.Equal(t, types.Decimal("0.100000000000000001"), got.CostByCurrency[0].Total.PricedCost)
 	require.NoError(t, mock.ExpectationsWereMet())
 }

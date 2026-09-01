@@ -105,6 +105,62 @@ func TestEvaluationRunRepositoryLifecycleAndRestart(t *testing.T) {
 	assert.Equal(t, "postgres", completed.ConfigSnapshot.Retrieval.RetrieveDriver)
 }
 
+func TestEvaluationConfigSnapshotV11RoundTrip(t *testing.T) {
+	db := newEvaluationTestDB(t)
+	repo := NewEvaluationRunRepository(db)
+	run := testEvaluationRun("task-v1-1-snapshot", 12)
+	run.ConfigSnapshot = types.EvaluationConfigSnapshotV1{
+		SnapshotSchemaVersion:    1,
+		BenchmarkContractVersion: types.BenchmarkContractVersionV11,
+		Dataset: types.EvaluationDatasetSnapshot{
+			DatasetID: "benchmark_v1", DatasetSemanticSHA256: strings.Repeat("a", 64),
+			CorpusCount: 32, QuestionCount: 15, QrelsCount: 15, AnswerCount: 15,
+			CorpusMode: "pre_chunked_passages", ChunkingApplied: false,
+		},
+		Pipeline: types.EvaluationPipelineSnapshot{
+			Name: "rag", Metrics: []string{"precision", "recall", "ndcg", "mrr", "map", "bleu", "rouge"},
+			NDCGCutoffs: []int{3, 10},
+			Tokenizer:   types.EvaluationTokenizerSnapshot{Name: "jieba", DictionaryMode: "builtin"},
+		},
+		Models: types.EvaluationModelsSnapshot{
+			EmbeddingModelID: "embedding-safe", ChatModelID: "chat-safe", SummaryModelID: "summary-safe",
+			Embedding: &types.EvaluationConfiguredModelSnapshot{
+				ID: "embedding-safe", Name: "Embedding", Type: "embedding", Source: "openai",
+				Provider: "openai", InterfaceType: "openai",
+				Embedding: &types.EvaluationEmbeddingSnapshot{
+					Dimension: 1024, TruncatePromptTokens: 8192, SupportsDimensionOverride: true,
+				},
+			},
+			Chat: &types.EvaluationConfiguredModelSnapshot{
+				ID: "chat-safe", Name: "Chat", Type: "knowledge_qa", Source: "openai",
+				Provider: "openai", InterfaceType: "openai",
+			},
+			Summary: &types.EvaluationConfiguredModelSnapshot{
+				ID: "summary-safe", Name: "Summary", Type: "knowledge_qa", Source: "openai",
+				Provider: "openai", InterfaceType: "openai",
+			},
+		},
+		Execution: types.EvaluationExecutionSnapshot{WorkerLimit: 3},
+	}
+	require.NoError(t, repo.Create(context.Background(), run))
+
+	stored, err := repo.GetByTaskID(context.Background(), 12, run.TaskID)
+	require.NoError(t, err)
+	require.NotNil(t, stored)
+	require.Equal(t, types.BenchmarkContractVersionV11, stored.ConfigSnapshot.BenchmarkContractVersion)
+	require.Equal(t, strings.Repeat("a", 64), stored.ConfigSnapshot.Dataset.DatasetSemanticSHA256)
+	require.Equal(t, 32, stored.ConfigSnapshot.Dataset.CorpusCount)
+	require.Equal(t, 15, stored.ConfigSnapshot.Dataset.QuestionCount)
+	require.Equal(t, 15, stored.ConfigSnapshot.Dataset.QrelsCount)
+	require.Equal(t, 15, stored.ConfigSnapshot.Dataset.AnswerCount)
+	require.Equal(t, "pre_chunked_passages", stored.ConfigSnapshot.Dataset.CorpusMode)
+	require.False(t, stored.ConfigSnapshot.Dataset.ChunkingApplied)
+	require.Equal(t, 3, stored.ConfigSnapshot.Execution.WorkerLimit)
+	require.Equal(t, "builtin", stored.ConfigSnapshot.Pipeline.Tokenizer.DictionaryMode)
+	require.Equal(t, "embedding-safe", stored.ConfigSnapshot.Models.Embedding.ID)
+	require.Equal(t, 1024, stored.ConfigSnapshot.Models.Embedding.Embedding.Dimension)
+}
+
 func TestEvaluationRunRepositoryFailedAndTerminalProtection(t *testing.T) {
 	db := newEvaluationTestDB(t)
 	repo := NewEvaluationRunRepository(db)
