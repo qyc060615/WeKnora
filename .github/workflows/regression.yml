@@ -12,12 +12,15 @@ name: Regression
 # 2. benchmark-gate — the real causal chain:
 #      PR code → Benchmark v1.1 → current BenchmarkResult JSON → comparator.
 #    It calls real model APIs, so it is NOT run on every PR. It runs on:
-#      - the `benchmark-regression` label (authorized, cost-bounded PR gate)
+#      - any PR that carries the `benchmark-regression` label (opened /
+#        synchronize / reopened / labeled — the label alone authorizes it, so a
+#        follow-up push re-runs the gate against the new code)
 #      - a weekly schedule (provider/model/environment drift detection)
 #      - workflow_dispatch (manual)
 #
-# Neither job swallows a failure: Benchmark execution errors and quality
-# regressions both fail the job (no continue-on-error, no "|| true").
+# Neither job swallows a failure: Benchmark execution errors, contract
+# mismatches, and quality regressions all fail the job (no continue-on-error,
+# no "|| true").
 
 on:
   pull_request:
@@ -63,12 +66,14 @@ jobs:
 
   benchmark-gate:
     name: Benchmark quality regression gate
-    # Real-API gate: only for an authorized label, the schedule, or a manual run.
+    # Real-API gate. The `benchmark-regression` label authorizes it for a PR
+    # regardless of which event fired (opened/synchronize/reopened/labeled),
+    # so a follow-up push after labeling re-runs the gate instead of being
+    # skipped.
     if: |
       github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'pull_request' &&
-       github.event.action == 'labeled' &&
        contains(github.event.pull_request.labels.*.name, 'benchmark-regression'))
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -88,8 +93,7 @@ jobs:
           --health-retries 10
     env:
       # Runtime wiring. DB credentials here are the ephemeral CI service, not
-      # secrets; model credentials below come from GitHub Secrets and are never
-      # printed or written to the repo.
+      # secrets.
       DB_DRIVER: postgres
       DB_HOST: localhost
       DB_PORT: "5432"
@@ -99,20 +103,32 @@ jobs:
       RETRIEVE_DRIVER: postgres
       STORAGE_TYPE: dummy
       GIN_MODE: release
-      # Model provider configuration. The values are Secrets; the variable names
-      # are the contract. Operators must set these Secrets on the repository.
-      # NOTE: the `provider` value in the generated builtin_models.yaml must be
-      # adjusted to the actual provider (generic/aliyun/openai/...) the Secret
-      # points at.
-      REGRESSION_LLM_BASE_URL: ${{ secrets.REGRESSION_LLM_BASE_URL }}
+
+      # ---- Frozen Benchmark contract (version-controlled, NOT Secrets) ----
+      # Model identity, provider, and embedding dimension must match the frozen
+      # baseline (dataset/benchmark_v1/baseline_cache_off_v1_1.json). They are
+      # part of the controlled benchmark contract and must not drift through a
+      # Secret. Only the API keys below are Secrets.
+      REGRESSION_LLM_MODEL: deepseek-v4-pro
+      REGRESSION_LLM_PROVIDER: generic
+      REGRESSION_EMBEDDING_MODEL: text-embedding-v4
+      REGRESSION_EMBEDDING_PROVIDER: generic
+      REGRESSION_EMBEDDING_DIMENSION: "1024"
+      REGRESSION_RERANK_MODEL: qwen3-rerank
+      REGRESSION_RERANK_PROVIDER: aliyun
+
+      # ---- Endpoint configuration (GitHub Variables, not Secrets) ----
+      # Base URLs are provider endpoints, not credentials. They can differ per
+      # environment, so they are configured as repo Variables rather than
+      # hardcoded — but they are auditable, unlike a Secret.
+      REGRESSION_LLM_BASE_URL: ${{ vars.REGRESSION_LLM_BASE_URL }}
+      REGRESSION_EMBEDDING_BASE_URL: ${{ vars.REGRESSION_EMBEDDING_BASE_URL }}
+      REGRESSION_RERANK_BASE_URL: ${{ vars.REGRESSION_RERANK_BASE_URL }}
+
+      # ---- Credentials (GitHub Secrets only) ----
       REGRESSION_LLM_API_KEY: ${{ secrets.REGRESSION_LLM_API_KEY }}
-      REGRESSION_LLM_MODEL: ${{ secrets.REGRESSION_LLM_MODEL }}
-      REGRESSION_EMBEDDING_BASE_URL: ${{ secrets.REGRESSION_EMBEDDING_BASE_URL }}
       REGRESSION_EMBEDDING_API_KEY: ${{ secrets.REGRESSION_EMBEDDING_API_KEY }}
-      REGRESSION_EMBEDDING_MODEL: ${{ secrets.REGRESSION_EMBEDDING_MODEL }}
-      REGRESSION_RERANK_BASE_URL: ${{ secrets.REGRESSION_RERANK_BASE_URL }}
       REGRESSION_RERANK_API_KEY: ${{ secrets.REGRESSION_RERANK_API_KEY }}
-      REGRESSION_RERANK_MODEL: ${{ secrets.REGRESSION_RERANK_MODEL }}
     steps:
       - uses: actions/checkout@v6
 
@@ -131,9 +147,10 @@ jobs:
           done
           exit 1
 
-      - name: Generate builtin models from Secrets
-        # Declarative model seed (config/builtin_models.yaml) referencing the
-        # Secret-backed env vars above. Written at runtime, never committed.
+      - name: Generate builtin models from frozen contract
+        # Declarative model seed (config/builtin_models.yaml). Model identity and
+        # provider come from the frozen env above; only api_key references the
+        # Secret-backed vars. Written at runtime, never committed.
         run: |
           cat > config/builtin_models.yaml <<'YAML'
           builtin_models:
@@ -145,7 +162,7 @@ jobs:
               parameters:
                 base_url: ${REGRESSION_LLM_BASE_URL}
                 api_key: ${REGRESSION_LLM_API_KEY}
-                provider: generic
+                provider: ${REGRESSION_LLM_PROVIDER}
             - id: regression-embedding
               type: Embedding
               source: remote
@@ -154,9 +171,9 @@ jobs:
               parameters:
                 base_url: ${REGRESSION_EMBEDDING_BASE_URL}
                 api_key: ${REGRESSION_EMBEDDING_API_KEY}
-                provider: generic
+                provider: ${REGRESSION_EMBEDDING_PROVIDER}
                 embedding_parameters:
-                  dimension: 1024
+                  dimension: ${REGRESSION_EMBEDDING_DIMENSION}
             - id: regression-rerank
               type: Rerank
               source: remote
@@ -164,7 +181,7 @@ jobs:
               parameters:
                 base_url: ${REGRESSION_RERANK_BASE_URL}
                 api_key: ${REGRESSION_RERANK_API_KEY}
-                provider: generic
+                provider: ${REGRESSION_RERANK_PROVIDER}
           YAML
 
       - name: Run Benchmark v1.1 (current generation)
@@ -176,6 +193,9 @@ jobs:
             --output artifacts/regression/current.json
 
       - name: Compare current against baseline
+        # Contract compatibility is checked before quality: a mismatched model /
+        # dataset / retrieval contract fails the gate instead of being misread as
+        # a quality regression.
         run: |
           go run ./cmd/regression \
             --baseline config/regression/baseline.json \

@@ -117,6 +117,12 @@ func runBenchmark(
 			if err != nil {
 				return nil, fmt.Errorf("fetch benchmark result: %w", err)
 			}
+			if result == nil {
+				// A successful run must always yield a result. A nil result here
+				// would otherwise panic downstream on result.Run.TaskID; fail
+				// closed instead.
+				return nil, fmt.Errorf("fetch benchmark result: empty result for task %s", taskID)
+			}
 			return result, nil
 		case types.EvaluationStatueFailed:
 			return nil, fmt.Errorf("benchmark evaluation failed (task %s)", taskID)

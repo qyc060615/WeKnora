@@ -3,17 +3,106 @@
   "run": {
     "evaluation_run_id": "449b15c1-0b49-481c-aef2-00091254d98d",
     "task_id": "evaluation_10000_1788273787263_0cff0de6_benchmarkv1",
-    "status": 2
+    "status": 2,
+    "total": 15,
+    "finished": 15,
+    "created_at": "2026-09-01T22:43:07.263819+08:00",
+    "started_at": "2026-09-01T22:43:07.271374+08:00",
+    "finished_at": "2026-09-01T22:46:51.533151+08:00"
+  },
+  "config": {
+    "snapshot_schema_version": 1,
+    "benchmark_contract_version": "v1.1",
+    "dataset": {
+      "dataset_id": "benchmark_v1",
+      "dataset_semantic_sha256": "56fd363d797ee4c1524a5a1a2517b3b30ce955229c37784cf730c0d1dc47fd0d",
+      "corpus_count": 32,
+      "question_count": 15,
+      "qrels_count": 15,
+      "answer_count": 15,
+      "corpus_mode": "pre_chunked_passages",
+      "chunking_applied": false
+    },
+    "pipeline": {
+      "name": "rag",
+      "metrics": [
+        "precision",
+        "recall",
+        "ndcg",
+        "mrr",
+        "map",
+        "bleu",
+        "rouge"
+      ],
+      "ndcg_cutoffs": [
+        3,
+        10
+      ],
+      "tokenizer": {
+        "name": "jieba",
+        "dictionary_mode": "builtin"
+      }
+    },
+    "retrieval": {
+      "vector_threshold": 0.2,
+      "keyword_threshold": 0.3,
+      "embedding_top_k": 30,
+      "rerank_top_k": 30,
+      "rerank_threshold": 0.3,
+      "retrieve_driver": "postgres"
+    },
+    "models": {
+      "embedding": {
+        "id": "c24c212d-ae14-4bed-b4c3-be95eeb36464",
+        "name": "text-embedding-v4",
+        "type": "Embedding",
+        "source": "remote",
+        "provider": "generic",
+        "interface_type": "",
+        "embedding": {
+          "dimension": 1024,
+          "truncate_prompt_tokens": 0,
+          "supports_dimension_override": true
+        }
+      },
+      "chat": {
+        "id": "5a50bf0a-60f9-4340-974b-0bd85c80b286",
+        "name": "deepseek-v4-pro",
+        "type": "KnowledgeQA",
+        "source": "remote",
+        "provider": "generic",
+        "interface_type": ""
+      },
+      "rerank": {
+        "id": "73b5c8e8-c403-4b2e-b36c-71af65db0920",
+        "name": "qwen3-rerank",
+        "type": "Rerank",
+        "source": "remote",
+        "provider": "aliyun",
+        "interface_type": ""
+      },
+      "summary": {
+        "id": "5a50bf0a-60f9-4340-974b-0bd85c80b286",
+        "name": "deepseek-v4-pro",
+        "type": "KnowledgeQA",
+        "source": "remote",
+        "provider": "generic",
+        "interface_type": ""
+      }
+    },
+    "execution": {
+      "worker_limit": 27
+    }
   },
   "quality": {
     "state": "complete",
     "retrieval": {
       "precision": 0.1390038665038665,
-      "recall": 1.0,
-      "ndcg_3": 1.0,
-      "ndcg_10": 1.0,
-      "mrr": 1.0,
-      "map": 1.0
+      "recall": 1,
+      "ndcg_3": 1,
+      "ndcg_10": 1,
+      "mrr": 1,
+      "map": 1
     },
     "answer": {
       "bleu_1": 0.15992535731999305,

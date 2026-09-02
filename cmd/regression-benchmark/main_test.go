@@ -107,6 +107,24 @@ func TestRunBenchmarkTimeout(t *testing.T) {
 	require.ErrorContains(t, err, "timed out")
 }
 
+func TestRunBenchmarkNilResult(t *testing.T) {
+	eval := &evalServiceStub{
+		start: func(_ context.Context, _, _, _, _ string) (*types.EvaluationDetail, error) {
+			return detail("task-1", types.EvaluationStatuePending), nil
+		},
+		result: func(_ context.Context, taskID string) (*types.EvaluationDetail, error) {
+			return detail(taskID, types.EvaluationStatueSuccess), nil
+		},
+	}
+	// Abnormal service: a successful run yields a nil result with no error.
+	results := &resultServiceStub{get: func(_ context.Context, _ string) (*types.BenchmarkResult, error) {
+		return nil, nil
+	}}
+
+	_, err := runBenchmark(context.Background(), eval, results, "benchmark_v1", time.Minute, time.Millisecond)
+	require.ErrorContains(t, err, "empty result")
+}
+
 func TestRunBenchmarkStartError(t *testing.T) {
 	eval := &evalServiceStub{
 		start: func(_ context.Context, _, _, _, _ string) (*types.EvaluationDetail, error) {

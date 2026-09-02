@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/Tencent/WeKnora/internal/types"
@@ -48,6 +47,66 @@ func writeFile(t *testing.T, dir, name string, data []byte) string {
 	path := filepath.Join(dir, name)
 	require.NoError(t, os.WriteFile(path, data, 0o644))
 	return path
+}
+
+// contractJSON builds a BenchmarkResult carrying a full frozen config snapshot
+// whose rerank provider is parameterized, so the compatibility guard can be
+// exercised end-to-end through the CLI.
+func contractJSON(rerankProvider string) []byte {
+	r := &types.BenchmarkResult{
+		BenchmarkVersion: types.BenchmarkContractVersionV11,
+		Config: types.EvaluationConfigSnapshotV1{
+			BenchmarkContractVersion: types.BenchmarkContractVersionV11,
+			Dataset: types.EvaluationDatasetSnapshot{
+				DatasetID:             "benchmark_v1",
+				DatasetSemanticSHA256: "56fd363d797ee4c1524a5a1a2517b3b30ce955229c37784cf730c0d1dc47fd0d",
+				CorpusCount:           32,
+				QuestionCount:         15,
+			},
+			Retrieval: types.EvaluationRetrievalSnapshot{
+				VectorThreshold:  0.2,
+				KeywordThreshold: 0.3,
+				EmbeddingTopK:    30,
+				RerankTopK:       30,
+				RerankThreshold:  0.3,
+				RetrieveDriver:   "postgres",
+			},
+			Models: types.EvaluationModelsSnapshot{
+				Embedding: &types.EvaluationConfiguredModelSnapshot{
+					Name:      "text-embedding-v4",
+					Provider:  "generic",
+					Embedding: &types.EvaluationEmbeddingSnapshot{Dimension: 1024},
+				},
+				Chat:   &types.EvaluationConfiguredModelSnapshot{Name: "deepseek-v4-pro", Provider: "generic"},
+				Rerank: &types.EvaluationConfiguredModelSnapshot{Name: "qwen3-rerank", Provider: rerankProvider},
+			},
+			Execution: types.EvaluationExecutionSnapshot{WorkerLimit: 27},
+		},
+		Quality: types.BenchmarkQuality{
+			State:     types.BenchmarkQualityStateComplete,
+			Retrieval: &types.BenchmarkRetrievalQuality{},
+			Answer:    &types.BenchmarkAnswerQuality{},
+		},
+	}
+	data, err := json.Marshal(r)
+	if err != nil {
+		panic(err)
+	}
+	return data
+}
+
+func TestCLICompatibilityMismatchExitOne(t *testing.T) {
+	dir := t.TempDir()
+	baseline := writeFile(t, dir, "baseline.json", contractJSON("aliyun"))
+	current := writeFile(t, dir, "current.json", contractJSON("generic"))
+
+	var stdout, stderr bytes.Buffer
+	code := runCLI([]string{"--baseline", baseline, "--current", current}, &stdout, &stderr)
+	require.Equal(t, exitRegression, code)
+	require.Contains(t, stdout.String(), "Compatibility: FAIL")
+	require.Contains(t, stdout.String(), "models.rerank.provider")
+	require.Contains(t, stdout.String(), "baseline = aliyun")
+	require.Contains(t, stdout.String(), "current  = generic")
 }
 
 func TestCLIPassExitZero(t *testing.T) {
@@ -144,6 +203,8 @@ func TestCLIEmptyResultFailsClosed(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := runCLI([]string{"--baseline", baseline, "--current", current}, &stdout, &stderr)
 	require.Equal(t, exitRegression, code)
-	require.Contains(t, stdout.String(), "Overall: FAIL")
-	require.True(t, strings.Contains(stdout.String(), "missing"), "empty result must fail closed as missing metrics")
+	// An empty result has no benchmark_version, so the compatibility guard trips
+	// before any quality comparison — still a clean fail-closed, non-zero exit.
+	require.Contains(t, stdout.String(), "Compatibility: FAIL")
+	require.Contains(t, stdout.String(), "benchmark_version")
 }

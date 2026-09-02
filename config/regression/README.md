@@ -6,11 +6,13 @@
 
 ## 文件
 
-- `baseline.json` — 冻结的 baseline。`quality` 部分来自真实 Benchmark v1.1
-  Cache OFF run（见下方 Baseline Provenance），只保留 quality metrics +
-  标识符，不包含 latency / token / cache 等 operational 数据。
-- `current.json` — 最新的 current result。初始状态与 baseline 相同（PASS）。
-  真实 Benchmark 运行后用 `cmd/regression-benchmark` 产出的 JSON 覆盖它。
+- `baseline.json` — 冻结的 baseline。来自真实 Benchmark v1.1 Cache OFF run
+  （见下方 Baseline Provenance），保留 `quality`（12 metrics）+ `config`
+  （frozen contract：dataset / retrieval / model / worker_limit）+ 标识符，
+  剥离 `model_facts` / `run_wall_clock_duration_ms` 等 operational 数据。
+- `current.json` — 最新的 current result。初始状态与 baseline 相同 contract +
+  相同 quality（PASS）。真实 Benchmark 运行后用 `cmd/regression-benchmark`
+  产出的 JSON 覆盖它。
 - `policy.json` — 阈值策略。`default_allowed_drop` 是默认允许下降的绝对幅度，
   `allowed_drop` 可按 metric 覆盖。
 
@@ -22,7 +24,7 @@
 | evaluation_run_id | `449b15c1-0b49-481c-aef2-00091254d98d` |
 | benchmark version | `v1.1` |
 | 来源 | `dataset/benchmark_v1/baseline_cache_off_v1_1.json`（真实 run） |
-| 冻结 | 是（quality metrics） |
+| 冻结 | 是（quality metrics + benchmark contract） |
 
 `baseline_cache_off_v1_1.json` 是 Benchmark v1.1 correctness/E2E audit artifact。
 其 12 个 quality metrics 是真实的、可追溯的；但该 run 的 embedding provider
@@ -31,6 +33,20 @@ provider-request / provider-input / cost 这些 **operational 值不是权威 op
 baseline**（见 `dataset/benchmark_v1/README.md`）。Regression Comparator 只 gate
 12 个 quality metrics，不 gate operational 值，因此该 run 的 quality 部分可安全
 作为 quality regression baseline。
+
+## Compatibility Check
+
+Comparator 在比较 quality 前，先校验 baseline 与 current 的 benchmark contract
+一致（`internal/regression/compat.go`）。检查的字段包括：
+
+`benchmark_version`、`dataset.dataset_id / dataset_semantic_sha256 / corpus_count /
+question_count`、`retrieval.vector_threshold / keyword_threshold / embedding_top_k /
+rerank_top_k / rerank_threshold / retrieve_driver`、`models.embedding.name / provider /
+dimension`、`models.chat.name / provider`、`models.rerank.name / provider`、
+`execution.worker_limit`。
+
+任何字段不一致 → `Compatibility: FAIL`（列出全部 mismatch），exit `1`。这防止把
+「不同模型 / 不同 dataset / 不同检索 contract」误判为 quality regression。
 
 ## 阈值语义
 
@@ -63,6 +79,6 @@ go run ./cmd/regression \
 go run ./cmd/regression-benchmark --output artifacts/regression/current.json
 ```
 
-exit code：`0` = PASS，`1` = regression（或 metric 缺失 / 非有限数），`2` =
-执行错误（文件不可读 / JSON 损坏 / Benchmark 失败）。质量退化或 Benchmark
-执行失败绝不会返回 `0`。
+exit code：`0` = PASS，`1` = regression（或 metric 缺失 / 非有限数 /
+contract mismatch），`2` = 执行错误（文件不可读 / JSON 损坏 / Benchmark 失败）。
+质量退化、contract mismatch 或 Benchmark 执行失败绝不会返回 `0`。

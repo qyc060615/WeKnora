@@ -66,6 +66,13 @@ func runCLI(args []string, stdout, stderr io.Writer) int {
 		return exitError
 	}
 
+	// Contract guard first: a mismatch between the benchmark contracts is a
+	// configuration failure (fail-closed), not a quality comparison.
+	if mismatches := regression.CheckCompatibility(baseline, current); len(mismatches) > 0 {
+		fmt.Fprint(stdout, regression.FormatMismatches(mismatches))
+		return exitRegression
+	}
+
 	report, err := regression.Compare(baseline, current, policy)
 	if err != nil {
 		fmt.Fprintf(stderr, "regression: %v\n", err)
