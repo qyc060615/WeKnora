@@ -1,36 +1,31 @@
 name: Regression
 
-# Benchmark v1.1 quality regression gate. This workflow compares a current
-# unified Benchmark result against the frozen baseline under the centralized
-# threshold policy. The comparator's non-zero exit code is deliberately NOT
-# swallowed: a quality regression fails the job (and therefore the PR).
+# Benchmark v1.1 quality regression gate.
 #
-# The gate is intentionally independent of the frozen Evaluation / Embedding
-# Cache / Model Usage modules. It never calls a model API; it only consumes
-# already-produced JSON results.
+# Two jobs, deliberately separated:
+#
+# 1. comparator — deterministic, no model API. Runs on every PR code change and
+#    on the schedule/dispatch. It unit-tests the comparator and compares the
+#    frozen baseline against the committed current.json, so the gate mechanism
+#    itself can never silently rot.
+#
+# 2. benchmark-gate — the real causal chain:
+#      PR code → Benchmark v1.1 → current BenchmarkResult JSON → comparator.
+#    It calls real model APIs, so it is NOT run on every PR. It runs on:
+#      - the `benchmark-regression` label (authorized, cost-bounded PR gate)
+#      - a weekly schedule (provider/model/environment drift detection)
+#      - workflow_dispatch (manual)
+#
+# Neither job swallows a failure: Benchmark execution errors and quality
+# regressions both fail the job (no continue-on-error, no "|| true").
 
 on:
   pull_request:
-    paths:
-      - "**/*.go"
-      - "go.mod"
-      - "go.sum"
-      - "config/regression/**"
-      - ".github/workflows/regression.yml"
-  push:
-    branches: [main]
-    paths:
-      - "**/*.go"
-      - "go.mod"
-      - "go.sum"
-      - "config/regression/**"
-      - ".github/workflows/regression.yml"
+    types: [opened, synchronize, reopened, labeled]
+  schedule:
+    # Weekly, off the hour to avoid the fleet-wide :00 stampede.
+    - cron: "17 3 * * 1"
   workflow_dispatch:
-    inputs:
-      current:
-        description: "Path under the repo to the current benchmark result JSON (defaults to config/regression/current.json)"
-        required: false
-        default: "config/regression/current.json"
 
 permissions:
   contents: read
@@ -44,8 +39,8 @@ env:
   GOPROXY: https://proxy.golang.org,direct
 
 jobs:
-  regression:
-    name: Benchmark quality regression gate
+  comparator:
+    name: Comparator (deterministic)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -56,16 +51,135 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
-      - name: Comparator unit tests
-        run: go test ./internal/regression/... ./cmd/regression/...
+      - name: Unit tests
+        run: go test -count=1 ./internal/regression/... ./cmd/regression/... ./cmd/regression-benchmark/...
 
-      - name: Run regression gate
-        env:
-          CURRENT: ${{ github.event.inputs.current || 'config/regression/current.json' }}
+      - name: Gate (baseline vs committed current)
         run: |
           go run ./cmd/regression \
             --baseline config/regression/baseline.json \
-            --current "$CURRENT" \
+            --current config/regression/current.json \
+            --policy config/regression/policy.json
+
+  benchmark-gate:
+    name: Benchmark quality regression gate
+    # Real-API gate: only for an authorized label, the schedule, or a manual run.
+    if: |
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' &&
+       github.event.action == 'labeled' &&
+       contains(github.event.pull_request.labels.*.name, 'benchmark-regression'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: weknora
+          POSTGRES_PASSWORD: weknora
+          POSTGRES_DB: weknora
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U weknora"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Runtime wiring. DB credentials here are the ephemeral CI service, not
+      # secrets; model credentials below come from GitHub Secrets and are never
+      # printed or written to the repo.
+      DB_DRIVER: postgres
+      DB_HOST: localhost
+      DB_PORT: "5432"
+      DB_USER: weknora
+      DB_PASSWORD: weknora
+      DB_NAME: weknora
+      RETRIEVE_DRIVER: postgres
+      STORAGE_TYPE: dummy
+      GIN_MODE: release
+      # Model provider configuration. The values are Secrets; the variable names
+      # are the contract. Operators must set these Secrets on the repository.
+      # NOTE: the `provider` value in the generated builtin_models.yaml must be
+      # adjusted to the actual provider (generic/aliyun/openai/...) the Secret
+      # points at.
+      REGRESSION_LLM_BASE_URL: ${{ secrets.REGRESSION_LLM_BASE_URL }}
+      REGRESSION_LLM_API_KEY: ${{ secrets.REGRESSION_LLM_API_KEY }}
+      REGRESSION_LLM_MODEL: ${{ secrets.REGRESSION_LLM_MODEL }}
+      REGRESSION_EMBEDDING_BASE_URL: ${{ secrets.REGRESSION_EMBEDDING_BASE_URL }}
+      REGRESSION_EMBEDDING_API_KEY: ${{ secrets.REGRESSION_EMBEDDING_API_KEY }}
+      REGRESSION_EMBEDDING_MODEL: ${{ secrets.REGRESSION_EMBEDDING_MODEL }}
+      REGRESSION_RERANK_BASE_URL: ${{ secrets.REGRESSION_RERANK_BASE_URL }}
+      REGRESSION_RERANK_API_KEY: ${{ secrets.REGRESSION_RERANK_API_KEY }}
+      REGRESSION_RERANK_MODEL: ${{ secrets.REGRESSION_RERANK_MODEL }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Wait for PostgreSQL
+        run: |
+          for i in $(seq 1 30); do
+            if pg_isready -h localhost -p 5432 -U weknora >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 1
+          done
+          exit 1
+
+      - name: Generate builtin models from Secrets
+        # Declarative model seed (config/builtin_models.yaml) referencing the
+        # Secret-backed env vars above. Written at runtime, never committed.
+        run: |
+          cat > config/builtin_models.yaml <<'YAML'
+          builtin_models:
+            - id: regression-llm
+              type: KnowledgeQA
+              source: remote
+              is_default: true
+              name: ${REGRESSION_LLM_MODEL}
+              parameters:
+                base_url: ${REGRESSION_LLM_BASE_URL}
+                api_key: ${REGRESSION_LLM_API_KEY}
+                provider: generic
+            - id: regression-embedding
+              type: Embedding
+              source: remote
+              is_default: true
+              name: ${REGRESSION_EMBEDDING_MODEL}
+              parameters:
+                base_url: ${REGRESSION_EMBEDDING_BASE_URL}
+                api_key: ${REGRESSION_EMBEDDING_API_KEY}
+                provider: generic
+                embedding_parameters:
+                  dimension: 1024
+            - id: regression-rerank
+              type: Rerank
+              source: remote
+              name: ${REGRESSION_RERANK_MODEL}
+              parameters:
+                base_url: ${REGRESSION_RERANK_BASE_URL}
+                api_key: ${REGRESSION_RERANK_API_KEY}
+                provider: generic
+          YAML
+
+      - name: Run Benchmark v1.1 (current generation)
+        # Reuses the existing EvaluationService / BenchmarkResultService runtime.
+        # A benchmark execution error propagates a non-zero exit and fails the job.
+        run: |
+          go run ./cmd/regression-benchmark \
+            --dataset benchmark_v1 \
+            --output artifacts/regression/current.json
+
+      - name: Compare current against baseline
+        run: |
+          go run ./cmd/regression \
+            --baseline config/regression/baseline.json \
+            --current artifacts/regression/current.json \
             --policy config/regression/policy.json \
             --report regression-report.json
 
