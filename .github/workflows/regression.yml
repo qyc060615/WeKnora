@@ -1,0 +1,78 @@
+name: Regression
+
+# Benchmark v1.1 quality regression gate. This workflow compares a current
+# unified Benchmark result against the frozen baseline under the centralized
+# threshold policy. The comparator's non-zero exit code is deliberately NOT
+# swallowed: a quality regression fails the job (and therefore the PR).
+#
+# The gate is intentionally independent of the frozen Evaluation / Embedding
+# Cache / Model Usage modules. It never calls a model API; it only consumes
+# already-produced JSON results.
+
+on:
+  pull_request:
+    paths:
+      - "**/*.go"
+      - "go.mod"
+      - "go.sum"
+      - "config/regression/**"
+      - ".github/workflows/regression.yml"
+  push:
+    branches: [main]
+    paths:
+      - "**/*.go"
+      - "go.mod"
+      - "go.sum"
+      - "config/regression/**"
+      - ".github/workflows/regression.yml"
+  workflow_dispatch:
+    inputs:
+      current:
+        description: "Path under the repo to the current benchmark result JSON (defaults to config/regression/current.json)"
+        required: false
+        default: "config/regression/current.json"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GO_VERSION: "1.26"
+  GOPROXY: https://proxy.golang.org,direct
+
+jobs:
+  regression:
+    name: Benchmark quality regression gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Comparator unit tests
+        run: go test ./internal/regression/... ./cmd/regression/...
+
+      - name: Run regression gate
+        env:
+          CURRENT: ${{ github.event.inputs.current || 'config/regression/current.json' }}
+        run: |
+          go run ./cmd/regression \
+            --baseline config/regression/baseline.json \
+            --current "$CURRENT" \
+            --policy config/regression/policy.json \
+            --report regression-report.json
+
+      - name: Upload regression report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: regression-report
+          path: regression-report.json
+          if-no-files-found: ignore

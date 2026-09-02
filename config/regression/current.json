@@ -1,0 +1,27 @@
+{
+  "benchmark_version": "v1.1",
+  "run": {
+    "evaluation_run_id": "current-run-placeholder",
+    "task_id": "current-task-placeholder"
+  },
+  "quality": {
+    "state": "complete",
+    "retrieval": {
+      "precision": 0.8667,
+      "recall": 0.8000,
+      "ndcg_3": 0.8333,
+      "ndcg_10": 0.8760,
+      "mrr": 0.8125,
+      "map": 0.7917
+    },
+    "answer": {
+      "bleu_1": 0.4210,
+      "bleu_2": 0.3105,
+      "bleu_4": 0.1842,
+      "rouge_1": 0.5234,
+      "rouge_2": 0.3121,
+      "rouge_l": 0.4812
+    }
+  },
+  "reproducibility": "complete"
+}
