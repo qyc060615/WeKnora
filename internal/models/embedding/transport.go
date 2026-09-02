@@ -15,7 +15,13 @@ import (
 // It is wrapped in usageCountingTransport so every outbound HTTP attempt is
 // counted on the per-invocation usage span (see provider_requests).
 var sharedEmbeddingHTTPTransport = &usageCountingTransport{
-	inner: secutils.NewSSRFSafeTransport(secutils.DefaultSSRFSafeHTTPClientConfig()),
+	inner: newEmbeddingHTTPTransport(),
+}
+
+func newEmbeddingHTTPTransport() *http.Transport {
+	transport := secutils.NewSSRFSafeTransport(secutils.DefaultSSRFSafeHTTPClientConfig())
+	transport.Proxy = http.ProxyFromEnvironment
+	return transport
 }
 
 // usageCountingTransport counts each outbound HTTP attempt on the
