@@ -113,9 +113,14 @@ jobs:
       REGRESSION_LLM_PROVIDER: generic
       REGRESSION_EMBEDDING_MODEL: text-embedding-v4
       REGRESSION_EMBEDDING_PROVIDER: generic
-      REGRESSION_EMBEDDING_DIMENSION: "1024"
       REGRESSION_RERANK_MODEL: qwen3-rerank
       REGRESSION_RERANK_PROVIDER: aliyun
+
+      # GOMAXPROCS pins the Go scheduler's CPU count so evaluationWorkerLimit()
+      # (max(GOMAXPROCS-1, 1)) produces the frozen worker_limit=27: 28 - 1 = 27.
+      # Without this, the CI runner's CPU count would drive a different worker
+      # limit and break compatibility with the frozen baseline snapshot.
+      GOMAXPROCS: "28"
 
       # ---- Endpoint configuration (GitHub Variables, not Secrets) ----
       # Base URLs are provider endpoints, not credentials. They can differ per
@@ -136,6 +141,29 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
+
+      - name: Preflight — verify benchmark configuration
+        # Fail fast before touching the DB or any model API. Reports only the
+        # missing variable names — never their values.
+        run: |
+          missing=()
+          for var in \
+            REGRESSION_LLM_BASE_URL \
+            REGRESSION_EMBEDDING_BASE_URL \
+            REGRESSION_RERANK_BASE_URL \
+            REGRESSION_LLM_API_KEY \
+            REGRESSION_EMBEDDING_API_KEY \
+            REGRESSION_RERANK_API_KEY; do
+            if [ -z "${!var}" ]; then
+              missing+=("$var")
+            fi
+          done
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "Missing benchmark configuration variables:" >&2
+            printf '  - %s\n' "${missing[@]}" >&2
+            exit 1
+          fi
+          echo "Benchmark configuration present."
 
       - name: Wait for PostgreSQL
         run: |
@@ -173,7 +201,8 @@ jobs:
                 api_key: ${REGRESSION_EMBEDDING_API_KEY}
                 provider: ${REGRESSION_EMBEDDING_PROVIDER}
                 embedding_parameters:
-                  dimension: ${REGRESSION_EMBEDDING_DIMENSION}
+                  # Non-string field: literal per builtin_models.yaml.example.
+                  dimension: 1024
             - id: regression-rerank
               type: Rerank
               source: remote
