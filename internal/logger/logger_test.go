@@ -299,3 +299,26 @@ func TestCloneContextPreservesEvaluationRunID(t *testing.T) {
 		t.Fatal("an unmarked cloned context must carry no run ID")
 	}
 }
+
+func TestCloneContextWithoutTraceDropsTheChatTrace(t *testing.T) {
+	t.Parallel()
+
+	const tenantID uint64 = 42
+	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, tenantID)
+	ctx = context.WithValue(ctx, types.LangfuseTraceContextKey, "trace-handle")
+
+	kept := CloneContext(ctx)
+	if kept.Value(types.LangfuseTraceContextKey) != "trace-handle" {
+		t.Fatal("CloneContext must keep the Langfuse trace so same-request work stays nested")
+	}
+
+	detached := CloneContextWithoutTrace(ctx)
+	if detached.Value(types.LangfuseTraceContextKey) != nil {
+		t.Fatal("CloneContextWithoutTrace must drop the Langfuse trace so " +
+			"background sandbox RPCs do not join the chat tree")
+	}
+	got, _ := detached.Value(types.TenantIDContextKey).(uint64)
+	if got != tenantID {
+		t.Fatalf("TenantID = %d, want %d (identity must survive the detach)", got, tenantID)
+	}
+}

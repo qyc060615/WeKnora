@@ -438,7 +438,17 @@ func TestChatUsageStreamProviderError(t *testing.T) {
 	usage.SetRecorder(usage.NewRecorder(repo))
 	defer usage.SetRecorder(nil)
 
-	inner := &usageFakeChat{stream: []types.StreamResponse{{ResponseType: types.ResponseTypeError, Done: true}}}
+	partial := types.TokenUsage{
+		PromptTokens:     11,
+		CompletionTokens: 7,
+		TotalTokens:      18,
+		TokenProvenance:  types.TokenProvenanceProviderReported,
+	}
+	inner := &usageFakeChat{stream: []types.StreamResponse{{
+		ResponseType: types.ResponseTypeError,
+		Done:         true,
+		Usage:        &partial,
+	}}}
 	w, _ := wrapChatUsage(inner, ptr(testChatConfig()), nil, nil)
 	ch, err := w.ChatStream(tenantCtx(1), nil, nil)
 	require.NoError(t, err)
@@ -446,7 +456,13 @@ func TestChatUsageStreamProviderError(t *testing.T) {
 	}
 
 	require.Equal(t, 1, repo.count())
-	require.Equal(t, types.UsageStatusError, repo.last().Status)
+	got := repo.last()
+	require.Equal(t, types.UsageStatusError, got.Status)
+	require.Equal(t, 1, got.ProviderRequests)
+	require.Equal(t, 11, *got.InputTokens)
+	require.Equal(t, 7, *got.OutputTokens)
+	require.Equal(t, 18, *got.TotalTokens)
+	require.Equal(t, types.TokenProvenanceProviderReported, got.TokenProvenance)
 }
 
 func TestChatUsageStreamCancelled(t *testing.T) {
