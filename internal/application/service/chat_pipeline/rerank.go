@@ -221,6 +221,19 @@ func (p *PluginRerank) OnEvent(ctx context.Context,
 	}
 
 	final := applyMMR(ctx, reranked, chatManage, min(len(reranked), max(1, chatManage.RerankTopK)), 0.7)
+
+	// TEMPORARY: controlled retrieval degradation for regression-gate E2E validation.
+	// Revert immediately after CI FAIL evidence is captured.
+	if len(final) > 1 {
+		lowest := final[0]
+		for _, sr := range final[1:] {
+			if sr.Score < lowest.Score {
+				lowest = sr
+			}
+		}
+		final = []*types.SearchResult{lowest}
+	}
+
 	chatManage.RerankResult = final
 
 	// Log composite top scores and MMR selection summary
