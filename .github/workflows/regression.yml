@@ -79,7 +79,11 @@ jobs:
     timeout-minutes: 45
     services:
       postgres:
-        image: postgres:16-alpine
+        # ParadeDB ships the PostgreSQL extensions the retrieval migrations
+        # need (vector, pg_trgm, pg_search). The plain postgres:16-alpine image
+        # lacks them and fails migration 2 with 'extension "vector" is not
+        # available'. Matches docker-compose.yml's production postgres service.
+        image: paradedb/paradedb:v0.22.2-pg17
         env:
           POSTGRES_USER: weknora
           POSTGRES_PASSWORD: weknora
