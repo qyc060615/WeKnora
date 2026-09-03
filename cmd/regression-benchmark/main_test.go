@@ -37,6 +37,19 @@ func detail(id string, status types.EvaluationStatue) *types.EvaluationDetail {
 	return &types.EvaluationDetail{Task: &types.EvaluationTask{ID: id, Status: status}}
 }
 
+func TestBenchmarkContextCarriesTenant(t *testing.T) {
+	ctx := benchmarkContext(10000)
+
+	id, ok := types.TenantIDFromContext(ctx)
+	require.True(t, ok)
+	require.Equal(t, uint64(10000), id)
+
+	info, ok := types.TenantInfoFromContext(ctx)
+	require.True(t, ok)
+	require.NotNil(t, info)
+	require.Equal(t, uint64(10000), info.ID)
+}
+
 func TestRunBenchmarkSuccess(t *testing.T) {
 	var startedDataset, fetchedTask string
 	polls := 0

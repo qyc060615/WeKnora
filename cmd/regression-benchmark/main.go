@@ -51,7 +51,7 @@ func runCLI(args []string, stdout, stderr io.Writer) int {
 		return exitErr
 	}
 
-	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, *tenant)
+	ctx := benchmarkContext(*tenant)
 
 	// Resolve the exact runtime the server uses. BuildContainer wires the full
 	// stack (DB, migrations, builtin model seeding, retrieval engines) so the
@@ -83,6 +83,19 @@ func runCLI(args []string, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "task_id=%s evaluation_run_id=%s benchmark_version=%s written=%s\n",
 		result.Run.TaskID, result.Run.EvaluationRunID, result.BenchmarkVersion, *output)
 	return exitOK
+}
+
+// benchmarkContext builds the workspace context the internal benchmark driver
+// runs under. The HTTP auth middleware normally injects both TenantID and
+// TenantInfo; this CLI bypasses the middleware, so it must provide both or
+// KnowledgeBaseService.applyAndValidateStorageBackend fails with "workspace
+// context missing". TenantInfo is a minimal Tenant{ID} stub — the storage
+// backend service hydrates the remaining storage config from the persisted
+// workspace row when one exists. It does not fabricate a JWT/User identity or
+// weaken any authorization check.
+func benchmarkContext(tenantID uint64) context.Context {
+	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, tenantID)
+	return context.WithValue(ctx, types.TenantInfoContextKey, &types.Tenant{ID: tenantID})
 }
 
 // runBenchmark triggers a benchmark evaluation and blocks until it reaches a
