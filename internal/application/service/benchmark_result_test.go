@@ -56,6 +56,12 @@ func (s *benchmarkUsageRepositoryStub) AggregateEvaluationRun(_ context.Context,
 	return s.result, nil
 }
 
+func (s *benchmarkUsageRepositoryStub) AggregateAnalytics(
+	context.Context, uint64, types.ModelUsageAnalyticsQuery,
+) (*types.ModelUsageAnalyticsResult, error) {
+	return nil, nil
+}
+
 func completeBenchmarkSnapshot() types.EvaluationConfigSnapshotV1 {
 	model := func(id string) *types.EvaluationConfiguredModelSnapshot {
 		return &types.EvaluationConfiguredModelSnapshot{

@@ -183,6 +183,19 @@ func assertPostgreSQLAggregation(t *testing.T, ctx context.Context, tx *gorm.DB)
 	wrongTenant, err := usageRepo.AggregateEvaluationRun(ctx, tenantID+1, runID)
 	require.NoError(t, err)
 	require.Zero(t, wrongTenant.Calls.Total)
+
+	analytics, err := usageRepo.AggregateAnalytics(ctx, tenantID, types.ModelUsageAnalyticsQuery{
+		StartTime: time.Now().UTC().Add(-time.Hour),
+		EndTime:   time.Now().UTC().Add(time.Hour),
+		Interval:  types.ModelUsageAnalyticsIntervalHour,
+	})
+	require.NoError(t, err)
+	require.Equal(t, types.ModelUsageAnalyticsTimeBasis, analytics.TimeBasis)
+	require.Equal(t, types.CallCounts{Total: 3, Chat: 1, Embedding: 1, Rerank: 1}, analytics.Summary.Calls)
+	require.Equal(t, types.CallCounts{Total: 1, Embedding: 1}, analytics.Summary.NoCostRowCalls)
+	require.Equal(t, types.CallCounts{Total: 1, Rerank: 1}, analytics.Summary.CostRowsWithoutCurrency)
+	require.Len(t, analytics.Summary.CostByCurrency, 1)
+	require.Equal(t, totalCost, analytics.Summary.CostByCurrency[0].Total.PricedCost)
 }
 
 func postgresAggregationUsage(tenantID uint64, runID string, callType types.CallType) *types.ModelUsage {
