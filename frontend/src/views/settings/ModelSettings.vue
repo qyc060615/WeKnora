@@ -7,7 +7,7 @@
           <p class="section-description">{{ $t('modelSettings.description') }}</p>
         </div>
         <t-button
-          v-if="authStore.hasRole('admin')"
+          v-if="activeView === 'models' && authStore.hasRole('admin')"
           type="button"
           theme="primary"
           variant="text"
@@ -20,7 +20,7 @@
         </t-button>
       </div>
 
-      <div class="builtin-models-hint" role="note">
+      <div v-if="activeView === 'models'" class="builtin-models-hint" role="note">
         <p class="builtin-hint-label">{{ $t('modelSettings.builtinModels.title') }}</p>
         <p class="builtin-hint-text">
           {{ $t(authStore.isSystemAdmin
@@ -35,7 +35,13 @@
       </div>
     </div>
 
-    <t-tabs v-model="activeTypeFilter" class="model-type-tabs" data-guide="settings-models">
+    <t-tabs v-model="activeView" class="model-view-tabs">
+      <t-tab-panel value="models" :label="$t('modelSettings.views.models')" />
+      <t-tab-panel value="analytics" :label="$t('modelSettings.views.analytics')" />
+    </t-tabs>
+
+    <template v-if="activeView === 'models'">
+      <t-tabs v-model="activeTypeFilter" class="model-type-tabs" data-guide="settings-models">
       <t-tab-panel value="all" :label="`${$t('common.all')}(${allLegacyModels.length})`" />
       <t-tab-panel value="chat" :label="`${$t('modelSettings.typeShort.chat')}(${countByType('chat')})`" />
       <t-tab-panel value="embedding"
@@ -43,7 +49,7 @@
       <t-tab-panel value="rerank" :label="`${$t('modelSettings.typeShort.rerank')}(${countByType('rerank')})`" />
       <t-tab-panel value="vllm" :label="`${$t('modelSettings.typeShort.vllm')}(${countByType('vllm')})`" />
       <t-tab-panel value="asr" :label="`${$t('modelSettings.typeShort.asr')}(${countByType('asr')})`" />
-    </t-tabs>
+      </t-tabs>
 
     <t-loading :loading="loading" size="small" class="model-list-loading">
       <div v-if="!loading && filteredModels.length === 0 && !authStore.hasRole('admin')" class="empty-state">
@@ -261,8 +267,10 @@
     <!-- 模型编辑器抽屉 -->
     <ModelEditorDialog v-model:visible="showDialog" :model-type="currentModelType" :model-data="editingModel"
       @confirm="handleModelSave" />
-    <ModelDebugDrawer v-model:visible="showDebugDrawer" :models="allModels" />
+      <ModelDebugDrawer v-model:visible="showDebugDrawer" :models="allModels" />
+    </template>
 
+    <ModelUsageAnalytics v-else />
   </div>
 </template>
 
@@ -274,6 +282,7 @@ import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import ModelEditorDialog from '@/components/ModelEditorDialog.vue'
 import ModelDebugDrawer from '@/components/ModelDebugDrawer.vue'
+import ModelUsageAnalytics from './components/ModelUsageAnalytics.vue'
 import {
   listModels,
   createModel,
@@ -306,6 +315,7 @@ const chatResources = useChatResourcesStore()
 const router = useRouter()
 type ModelType = 'chat' | 'embedding' | 'rerank' | 'vllm' | 'asr'
 type FilterType = 'all' | ModelType
+type ModelSettingsView = 'models' | 'analytics'
 
 const showDialog = ref(false)
 const showDebugDrawer = ref(false)
@@ -316,6 +326,7 @@ const currentModelType = ref<ModelType>('chat')
 const editingModel = ref<any>(null)
 const loading = ref(true)
 const activeTypeFilter = ref<FilterType>('all')
+const activeView = ref<ModelSettingsView>('models')
 
 const MODEL_TAB_TYPES: FilterType[] = ['chat', 'embedding', 'rerank', 'vllm', 'asr']
 const KNOWLEDGE_BASE_EDITOR_HOST_ROUTES = new Set([
@@ -919,6 +930,14 @@ onMounted(() => {
 
 .model-list-loading {
   min-height: 120px;
+}
+
+.model-view-tabs {
+  margin-bottom: 20px;
+
+  :deep(.t-tabs__content) {
+    display: none;
+  }
 }
 
 .model-type-tabs {
