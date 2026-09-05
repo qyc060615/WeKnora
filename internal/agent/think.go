@@ -79,6 +79,9 @@ func (e *AgentEngine) streamLLMToEventBus(
 			firstChunkTime = time.Now()
 		}
 		responseTypeCounts[string(chunk.ResponseType)]++
+		if chunk.Usage != nil {
+			result.Usage = chunk.Usage
+		}
 
 		// Capture error messages from the stream (e.g., "context deadline exceeded")
 		// but do NOT append them to result.Content — they would leak to the user
@@ -122,10 +125,6 @@ func (e *AgentEngine) streamLLMToEventBus(
 
 		if len(chunk.ToolCalls) > 0 {
 			result.ToolCalls = chunk.ToolCalls
-		}
-
-		if chunk.Usage != nil {
-			result.Usage = chunk.Usage
 		}
 
 		if chunk.FinishReason != "" {

@@ -181,3 +181,56 @@ func TestWikiPageModifyUserPrompt_SharedSourceContextPrecedesPageVariables(t *te
 		t.Fatalf("shared source context is not part of the cacheable prefix: %s", a[:ia])
 	}
 }
+
+func TestWikiDocumentPromptsStablePrefix(t *testing.T) {
+	for name, prompt := range map[string]string{"candidate": WikiCandidateSlugPrompt, "summary": WikiSummaryPrompt} {
+		t.Run(name, func(t *testing.T) {
+			render := func(content string) string {
+				tmpl := template.Must(template.New("wiki").Parse(prompt))
+				var b strings.Builder
+				err := tmpl.Execute(&b, map[string]string{"Content": content, "Language": "English", "Granularity": "standard", "GranularityGuidance": WikiGranularityGuidanceStandard, "PreviousSlugs": "PREVIOUS_SENTINEL", "ExtractedSlugs": "EXTRACTED_SENTINEL"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				return b.String()
+			}
+			a, b := render("DOCUMENT_A"), render("DOCUMENT_B")
+			marker := "\n<document>\n"
+			i, j := strings.Index(a, marker), strings.Index(b, marker)
+			if i < 0 || j < 0 {
+				t.Fatal("missing document block")
+			}
+			if a[:i] != b[:j] {
+				t.Fatal("document change alters shared prefix")
+			}
+			rules := []string{"<instructions>", "</instructions>"}
+			if name == "candidate" {
+				rules = append(rules, "### JSON Formatting Rules", "Output ONLY valid JSON. Example:")
+				rules = append(rules, "### Extraction Scope")
+			} else {
+				rules = append(rules, "**Image rule**", "**Wiki-link rule**", "**Empty content rule**", "Output the SUMMARY line first")
+			}
+			for _, rule := range rules {
+				if k := strings.Index(a, rule); k < 0 || k >= i {
+					t.Errorf("%q must precede document", rule)
+				}
+			}
+			fields := []string{"{{.Content}}", "{{.Language}}", "{{.BusinessInstructions}}"}
+			suffix := "EXTRACTED_SENTINEL"
+			if name == "candidate" {
+				fields = append(fields, "{{.PreviousSlugs}}", "{{.Granularity}}", "{{.GranularityGuidance}}")
+				suffix = "PREVIOUS_SENTINEL"
+			} else {
+				fields = append(fields, "{{.ExtractedSlugs}}")
+			}
+			if strings.Index(a, suffix) <= strings.Index(a, "DOCUMENT_A") {
+				t.Error("document-specific slugs must follow content")
+			}
+			for _, field := range fields {
+				if !strings.Contains(prompt, field) {
+					t.Errorf("lost %s", field)
+				}
+			}
+		})
+	}
+}

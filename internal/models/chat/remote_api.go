@@ -190,12 +190,14 @@ func (c *RemoteAPIChat) Chat(ctx context.Context, messages []Message, opts *Chat
 
 	req := *(body.(*openai.ChatCompletionRequest))
 	c.logRequest(timeoutCtx, req, false)
+	noteChatProviderRequest(timeoutCtx)
 	resp, err := c.client.CreateChatCompletion(timeoutCtx, req)
 	if err != nil {
 		if isMultimodalNotSupportedError(err) {
 			logger.Warnf(timeoutCtx, "[LLM Request] Model %s does not support multimodal, retrying without images", c.modelName)
 			cleaned := stripImagesFromMessages(messages)
 			req = c.shapedRequest(cleaned, opts, false)
+			noteChatProviderRequest(timeoutCtx)
 			resp, err = c.client.CreateChatCompletion(timeoutCtx, req)
 		}
 		if err != nil {
@@ -242,6 +244,7 @@ func (c *RemoteAPIChat) chatWithRawHTTP(ctx context.Context, endpoint string, cu
 	logger.Infof(ctx, "[LLM Request] Remote HTTP, endpoint=%s, model=%s",
 		endpoint, c.modelName)
 
+	noteChatProviderRequest(ctx)
 	resp, err := rawHTTPClient.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("send request: %w", err)
@@ -299,12 +302,14 @@ func (c *RemoteAPIChat) ChatStream(ctx context.Context, messages []Message, opts
 
 	streamChan := make(chan types.StreamResponse)
 
+	noteChatProviderRequest(timeoutCtx)
 	stream, err := c.client.CreateChatCompletionStream(timeoutCtx, req)
 	if err != nil {
 		if isMultimodalNotSupportedError(err) {
 			logger.Warnf(timeoutCtx, "[LLM Stream] Model %s does not support multimodal, retrying without images", c.modelName)
 			cleaned := stripImagesFromMessages(messages)
 			req = c.shapedRequest(cleaned, opts, true)
+			noteChatProviderRequest(timeoutCtx)
 			stream, err = c.client.CreateChatCompletionStream(timeoutCtx, req)
 		}
 		if err != nil {
@@ -376,6 +381,7 @@ func (c *RemoteAPIChat) chatStreamWithRawHTTP(ctx context.Context, endpoint stri
 	secutils.ApplyCustomHeaders(httpReq, c.customHeaders)
 	attachPromptCacheHeaders(httpReq, promptCachePolicyFor(c.provider, c.baseURL), promptCacheSessionID(ctx, opts))
 
+	noteChatProviderRequest(ctx)
 	resp, err := rawHTTPClient.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("send request: %w", err)

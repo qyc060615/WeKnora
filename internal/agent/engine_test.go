@@ -153,6 +153,11 @@ func TestStreamLLMToEventBus_ErrorAfterContent_IsNotASuccessfulTurn(t *testing.T
 			ResponseType: types.ResponseTypeError,
 			Content:      "context deadline exceeded",
 			Done:         true,
+			Usage: &types.TokenUsage{
+				PromptTokens:     11,
+				CompletionTokens: 7,
+				TotalTokens:      18,
+			},
 			FinishReason: types.FinishReasonIncomplete,
 			ToolCalls: []types.LLMToolCall{{
 				ID: "call-1",
@@ -173,6 +178,12 @@ func TestStreamLLMToEventBus_ErrorAfterContent_IsNotASuccessfulTurn(t *testing.T
 	// never fall back to "stop" — that fallback is what ended the conversation.
 	require.Len(t, result.ToolCalls, 1)
 	require.Equal(t, types.FinishReasonIncomplete, result.FinishReason)
+	require.NotNil(t, result.Usage)
+	require.Equal(t, 11, result.Usage.PromptTokens)
+	require.Equal(t, 7, result.Usage.CompletionTokens)
+	require.Equal(t, 18, result.Usage.TotalTokens)
+	require.Equal(t, "非常好，我已经获取了骨架模板。", result.Content,
+		"the error payload must not be treated as successful answer content")
 	require.True(t, isTransientError(err), "a broken stream must be retryable")
 }
 

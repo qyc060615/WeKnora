@@ -74,7 +74,7 @@ type AliyunEmbedResponse struct {
 			TextIndex int       `json:"text_index"`
 		} `json:"embeddings"`
 	} `json:"output"`
-	Usage struct {
+	Usage *struct {
 		TotalTokens int `json:"total_tokens"`
 	} `json:"usage"`
 	RequestID string `json:"request_id"`
@@ -240,6 +240,9 @@ func (e *AliyunEmbedder) BatchEmbed(ctx context.Context, texts []string) ([][]fl
 	if err := json.Unmarshal(body, &response); err != nil {
 		logger.GetLogger(ctx).Errorf("AliyunEmbedder BatchEmbed unmarshal response error: %v", err)
 		return nil, fmt.Errorf("unmarshal response: %w", err)
+	}
+	if response.Usage != nil {
+		noteEmbeddingTokens(ctx, nil, &response.Usage.TotalTokens)
 	}
 
 	// Extract embedding vectors, preserving order by text_index

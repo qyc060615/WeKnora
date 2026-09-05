@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/models/provider"
@@ -79,11 +80,18 @@ func (d *DocumentInfo) UnmarshalJSON(data []byte) error {
 }
 
 type RerankerConfig struct {
-	APIKey      string
-	BaseURL     string
-	ModelName   string
-	Source      types.ModelSource
-	ModelID     string
+	APIKey    string
+	BaseURL   string
+	ModelName string
+	Source    types.ModelSource
+	ModelID   string
+	// Type is the model type snapshot (Rerank / …), carried through from
+	// types.Model so model usage can record model_type without guessing.
+	Type types.ModelType
+	// TenantID is the tenant that owns the model config / credential, carried
+	// through from types.Model so model usage can snapshot the model owner
+	// independently of the business caller's tenant.
+	TenantID    uint64
 	Provider    string // Provider identifier: openai, aliyun, zhipu, siliconflow, jina, generic
 	ExtraConfig map[string]string
 	// CustomHeaders 允许在调用远程 API 时附加自定义 HTTP 请求头（类似 OpenAI Python SDK 的 extra_headers）。
@@ -105,6 +113,8 @@ func ConfigFromModel(m *types.Model, appID, appSecret string) *RerankerConfig {
 		BaseURL:       m.Parameters.BaseURL,
 		ModelName:     m.Name,
 		Source:        m.Source,
+		Type:          m.Type,
+		TenantID:      m.TenantID,
 		Provider:      m.Parameters.Provider,
 		ExtraConfig:   m.Parameters.ExtraConfig,
 		CustomHeaders: m.Parameters.CustomHeaders,
@@ -119,10 +129,32 @@ func NewReranker(config *RerankerConfig) (Reranker, error) {
 	if err != nil {
 		return r, err
 	}
+	resolvedModelName := effectiveRerankModelName(r)
 	if logger.LLMDebugEnabled() {
 		r = &debugReranker{inner: r}
 	}
-	return wrapRerankerLangfuse(r, nil)
+	r, err = wrapRerankerLangfuse(r, nil)
+	// Outermost: record one model_usage row per logical Rerank invocation.
+	return wrapRerankUsage(r, config, resolvedModelName, err)
+}
+
+type effectiveRerankModelNamer interface {
+	EffectiveModelName() string
+}
+
+func effectiveRerankModelName(r Reranker) *string {
+	if r == nil {
+		return nil
+	}
+	name := r.GetModelName()
+	if providerModel, ok := r.(effectiveRerankModelNamer); ok {
+		name = providerModel.EffectiveModelName()
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil
+	}
+	return &name
 }
 
 // customHeaderSetter 表示支持注入自定义 HTTP header 的 reranker 实现。

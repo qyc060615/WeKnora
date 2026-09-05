@@ -1,0 +1,35 @@
+CREATE TABLE IF NOT EXISTS evaluation_runs (
+    id VARCHAR(36) PRIMARY KEY,
+    task_id VARCHAR(255) NOT NULL UNIQUE,
+    tenant_id INTEGER NOT NULL,
+    dataset_id VARCHAR(255) NOT NULL,
+    source_knowledge_base_id VARCHAR(36),
+    embedding_model_id VARCHAR(64) NOT NULL,
+    rerank_model_id VARCHAR(64),
+    chat_model_id VARCHAR(64) NOT NULL,
+    status INTEGER NOT NULL CHECK (status BETWEEN 0 AND 3),
+    total INTEGER NOT NULL DEFAULT 0 CHECK (total >= 0),
+    finished INTEGER NOT NULL DEFAULT 0 CHECK (finished >= 0),
+    precision REAL,
+    recall REAL,
+    ndcg_3 REAL,
+    ndcg_10 REAL,
+    mrr REAL,
+    map REAL,
+    bleu_1 REAL,
+    bleu_2 REAL,
+    bleu_4 REAL,
+    rouge_1 REAL,
+    rouge_2 REAL,
+    rouge_l REAL,
+    config_snapshot TEXT NOT NULL,
+    started_at DATETIME,
+    finished_at DATETIME,
+    duration_ms INTEGER,
+    error_message TEXT NOT NULL DEFAULT '',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_evaluation_runs_tenant_created
+    ON evaluation_runs (tenant_id, created_at);

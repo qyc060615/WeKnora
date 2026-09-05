@@ -270,6 +270,40 @@ func TaskRetryMetadataFromContext(ctx context.Context) (retried, maxRetry int, o
 
 type taskRetryMetadataContextKey struct{}
 
+// WithEvaluationRunID derives a context attributed to a run-level evaluation.
+// Model usage recorded under it can be attributed to evaluation_runs.id via
+// EvaluationRunIDFromContext. An empty run ID is a no-op so callers never
+// overwrite a real attribution with an empty one.
+//
+// Scope: Model Usage v1 first-stage attribution covers the synchronous
+// evaluation lifecycle only. Calls that cross the Asynq task boundary (async
+// knowledge post-processing, async summary) are intentionally NOT attributed
+// because the run ID does not ride the Asynq task payload.
+func WithEvaluationRunID(ctx context.Context, evaluationRunID string) context.Context {
+	if strings.TrimSpace(evaluationRunID) == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, EvaluationRunIDContextKey, strings.TrimSpace(evaluationRunID))
+}
+
+// EvaluationRunIDFromContext extracts the evaluation run ID carried by ctx.
+// Returns ("", false) when the key is absent, empty, or not a string.
+func EvaluationRunIDFromContext(ctx context.Context) (string, bool) {
+	if ctx == nil {
+		return "", false
+	}
+	v, ok := ctx.Value(EvaluationRunIDContextKey).(string)
+	return v, ok && v != ""
+}
+
+// WithEmbedQuery marks ctx so a query embedding is treated as a query rather
+// than a document. It drives the embedding cache fingerprint mode and
+// provider input type (e.g. Nvidia) as well as usage purpose. Document/index
+// embedding is the default (key absent).
+func WithEmbedQuery(ctx context.Context) context.Context {
+	return context.WithValue(ctx, EmbedQueryContextKey, true)
+}
+
 // WithLLMCallMetadata annotates a provider call for cache observability. The
 // fingerprint must be a hash, never raw prompt content.
 func WithLLMCallMetadata(ctx context.Context, purpose, prefixFingerprint string) context.Context {

@@ -71,7 +71,7 @@ type VolcengineEmbedResponse struct {
 		Embedding []float32 `json:"embedding"`
 	} `json:"data"`
 	Model string `json:"model"`
-	Usage struct {
+	Usage *struct {
 		PromptTokens int `json:"prompt_tokens"`
 		TotalTokens  int `json:"total_tokens"`
 	} `json:"usage"`
@@ -245,6 +245,9 @@ func (e *VolcengineEmbedder) BatchEmbed(ctx context.Context, texts []string) ([]
 		if err := json.Unmarshal(body, &response); err != nil {
 			logger.GetLogger(ctx).Errorf("VolcengineEmbedder BatchEmbed unmarshal response error: %v", err)
 			return nil, fmt.Errorf("unmarshal response: %w", err)
+		}
+		if response.Usage != nil {
+			noteEmbeddingTokens(ctx, &response.Usage.PromptTokens, &response.Usage.TotalTokens)
 		}
 
 		embeddings[i] = response.Data.Embedding

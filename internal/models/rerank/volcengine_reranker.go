@@ -156,6 +156,7 @@ func (r *VolcengineReranker) rerankBatch(
 		"%s",
 		buildRerankRequestDebug(r.modelName, r.endpoint+volcengineRerankPath, query, documents),
 	)
+	noteProviderRequest(ctx, len(documents))
 	response, err := r.client.Rerank(ctx, request)
 	if err != nil {
 		return nil, fmt.Errorf("call Volcengine rerank: %w", err)

@@ -1,12 +1,15 @@
 package types
 
 import (
+	"database/sql/driver"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/yanyiwu/gojieba"
+	"gorm.io/gorm"
 )
 
 // Jieba is a global instance of Chinese text segmentation tool
@@ -37,6 +40,8 @@ const (
 	EvaluationStatueFailed                          // Task failed
 )
 
+const BenchmarkContractVersionV11 = "v1.1"
+
 // EvaluationTask contains information about an evaluation task
 type EvaluationTask struct {
 	ID        string `json:"id"`         // Unique task ID
@@ -56,6 +61,167 @@ type EvaluationDetail struct {
 	Task   *EvaluationTask `json:"task"`             // Evaluation task info
 	Params *ChatManage     `json:"params"`           // Evaluation parameters
 	Metric *MetricResult   `json:"metric,omitempty"` // Evaluation metrics
+}
+
+// EvaluationConfigSnapshotV1 is the versioned, secret-free allowlist needed
+// to explain and reconstruct the effective configuration of an evaluation.
+// It intentionally does not embed Model, ModelParameters, or global Config.
+type EvaluationConfigSnapshotV1 struct {
+	SnapshotSchemaVersion    int                          `json:"snapshot_schema_version"`
+	BenchmarkContractVersion string                       `json:"benchmark_contract_version,omitempty"`
+	Dataset                  EvaluationDatasetSnapshot    `json:"dataset"`
+	Pipeline                 EvaluationPipelineSnapshot   `json:"pipeline"`
+	Retrieval                EvaluationRetrievalSnapshot  `json:"retrieval"`
+	Models                   EvaluationModelsSnapshot     `json:"models"`
+	SourceKnowledgeBase      *EvaluationSourceKBSnapshot  `json:"source_knowledge_base,omitempty"`
+	Generation               EvaluationGenerationSnapshot `json:"generation"`
+	Execution                EvaluationExecutionSnapshot  `json:"execution"`
+}
+
+type EvaluationDatasetSnapshot struct {
+	DatasetID             string `json:"dataset_id"`
+	DatasetSemanticSHA256 string `json:"dataset_semantic_sha256,omitempty"`
+	CorpusCount           int    `json:"corpus_count,omitempty"`
+	QuestionCount         int    `json:"question_count,omitempty"`
+	QrelsCount            int    `json:"qrels_count,omitempty"`
+	AnswerCount           int    `json:"answer_count,omitempty"`
+	CorpusMode            string `json:"corpus_mode,omitempty"`
+	ChunkingApplied       bool   `json:"chunking_applied"`
+}
+
+type EvaluationPipelineSnapshot struct {
+	Name        string                      `json:"name"`
+	Metrics     []string                    `json:"metrics"`
+	NDCGCutoffs []int                       `json:"ndcg_cutoffs"`
+	Tokenizer   EvaluationTokenizerSnapshot `json:"tokenizer"`
+}
+
+type EvaluationTokenizerSnapshot struct {
+	Name                  string `json:"name"`
+	DictionaryMode        string `json:"dictionary_mode"`
+	DictionaryFingerprint string `json:"dictionary_fingerprint,omitempty"`
+}
+
+type EvaluationRetrievalSnapshot struct {
+	VectorThreshold  float64 `json:"vector_threshold"`
+	KeywordThreshold float64 `json:"keyword_threshold"`
+	EmbeddingTopK    int     `json:"embedding_top_k"`
+	RerankTopK       int     `json:"rerank_top_k"`
+	RerankThreshold  float64 `json:"rerank_threshold"`
+	RetrieveDriver   string  `json:"retrieve_driver,omitempty"`
+}
+
+type EvaluationModelsSnapshot struct {
+	EmbeddingModelID string  `json:"embedding_model_id"`
+	ChatModelID      string  `json:"chat_model_id"`
+	RerankModelID    *string `json:"rerank_model_id,omitempty"`
+	SummaryModelID   string  `json:"summary_model_id,omitempty"`
+
+	Embedding *EvaluationConfiguredModelSnapshot `json:"embedding,omitempty"`
+	Chat      *EvaluationConfiguredModelSnapshot `json:"chat,omitempty"`
+	Rerank    *EvaluationConfiguredModelSnapshot `json:"rerank,omitempty"`
+	Summary   *EvaluationConfiguredModelSnapshot `json:"summary,omitempty"`
+}
+
+// EvaluationConfiguredModelSnapshot is an explicit secret-free allowlist.
+// Never replace it by serializing Model or ModelParameters wholesale.
+type EvaluationConfiguredModelSnapshot struct {
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	Type          string `json:"type"`
+	Source        string `json:"source"`
+	Provider      string `json:"provider"`
+	InterfaceType string `json:"interface_type"`
+	// EndpointFingerprint identifies the effective network destination without
+	// persisting its URL, credentials, query parameters, or custom headers.
+	EndpointFingerprint string                       `json:"endpoint_fingerprint,omitempty"`
+	Embedding           *EvaluationEmbeddingSnapshot `json:"embedding,omitempty"`
+}
+
+type EvaluationEmbeddingSnapshot struct {
+	Dimension                 int  `json:"dimension"`
+	TruncatePromptTokens      int  `json:"truncate_prompt_tokens"`
+	SupportsDimensionOverride bool `json:"supports_dimension_override"`
+}
+
+type EvaluationSourceKBSnapshot struct {
+	ID               string `json:"id"`
+	EmbeddingModelID string `json:"embedding_model_id"`
+	SummaryModelID   string `json:"summary_model_id"`
+}
+
+type EvaluationGenerationSnapshot struct {
+	MaxRounds           int           `json:"max_rounds"`
+	SummaryConfig       SummaryConfig `json:"summary_config"`
+	FallbackResponse    string        `json:"fallback_response"`
+	RewritePromptSystem string        `json:"rewrite_prompt_system"`
+	RewritePromptUser   string        `json:"rewrite_prompt_user"`
+}
+
+type EvaluationExecutionSnapshot struct {
+	WorkerLimit int `json:"worker_limit"`
+}
+
+func (s EvaluationConfigSnapshotV1) Value() (driver.Value, error) { return json.Marshal(s) }
+
+func (s *EvaluationConfigSnapshotV1) Scan(value interface{}) error {
+	if value == nil {
+		return nil
+	}
+	var data []byte
+	switch value := value.(type) {
+	case []byte:
+		data = value
+	case string:
+		data = []byte(value)
+	default:
+		return nil
+	}
+	return json.Unmarshal(data, s)
+}
+
+// EvaluationRun is the database source of truth for a run-level evaluation.
+// Metric pointers preserve the distinction between not-yet-produced and zero.
+type EvaluationRun struct {
+	ID                    string           `gorm:"type:varchar(36);primaryKey"`
+	TaskID                string           `gorm:"type:varchar(255);not null;uniqueIndex"`
+	TenantID              uint64           `gorm:"not null;index:idx_evaluation_runs_tenant_created,priority:1"`
+	DatasetID             string           `gorm:"type:varchar(255);not null"`
+	SourceKnowledgeBaseID *string          `gorm:"type:varchar(36)"`
+	EmbeddingModelID      string           `gorm:"type:varchar(64);not null"`
+	RerankModelID         *string          `gorm:"type:varchar(64)"`
+	ChatModelID           string           `gorm:"type:varchar(64);not null"`
+	Status                EvaluationStatue `gorm:"not null"`
+	Total                 int              `gorm:"not null;default:0"`
+	Finished              int              `gorm:"not null;default:0"`
+	Precision             *float64
+	Recall                *float64
+	NDCG3                 *float64 `gorm:"column:ndcg_3"`
+	NDCG10                *float64 `gorm:"column:ndcg_10"`
+	MRR                   *float64
+	MAP                   *float64
+	BLEU1                 *float64                   `gorm:"column:bleu_1"`
+	BLEU2                 *float64                   `gorm:"column:bleu_2"`
+	BLEU4                 *float64                   `gorm:"column:bleu_4"`
+	ROUGE1                *float64                   `gorm:"column:rouge_1"`
+	ROUGE2                *float64                   `gorm:"column:rouge_2"`
+	ROUGEL                *float64                   `gorm:"column:rouge_l"`
+	ConfigSnapshot        EvaluationConfigSnapshotV1 `gorm:"type:jsonb;not null"`
+	StartedAt             *time.Time
+	FinishedAt            *time.Time
+	DurationMS            *int64    `gorm:"column:duration_ms"`
+	ErrorMessage          string    `gorm:"type:text"`
+	CreatedAt             time.Time `gorm:"index:idx_evaluation_runs_tenant_created,priority:2"`
+	UpdatedAt             time.Time
+}
+
+func (EvaluationRun) TableName() string { return "evaluation_runs" }
+
+func (r *EvaluationRun) BeforeCreate(_ *gorm.DB) error {
+	if r.ID == "" {
+		r.ID = uuid.NewString()
+	}
+	return nil
 }
 
 // String returns JSON representation of EvaluationTask

@@ -1,0 +1,374 @@
+[
+  {
+    "qid": 1,
+    "question": "在 NebulaTech 连续司龄满 3 年及以上的全职员工，每个完整自然年度有多少个工作日年假？",
+    "answer": "12 个工作日。",
+    "relevant_documents": [
+      "employee_handbook.md"
+    ],
+    "relevant_sections": [
+      "年假额度"
+    ],
+    "type": "single-hop"
+  },
+  {
+    "qid": 2,
+    "question": "通过试用期的全职员工每个自然周最多可以远程办公多少个工作日？",
+    "answer": "2 个工作日。",
+    "relevant_documents": [
+      "employee_handbook.md"
+    ],
+    "relevant_sections": [
+      "远程办公额度"
+    ],
+    "type": "single-hop"
+  },
+  {
+    "qid": 3,
+    "question": "北京、上海、广州、深圳的国内出差酒店含税上限是多少？",
+    "answer": "每人每晚 600 元。",
+    "relevant_documents": [
+      "expense_policy.md"
+    ],
+    "relevant_sections": [
+      "酒店标准"
+    ],
+    "type": "single-hop"
+  },
+  {
+    "qid": 4,
+    "question": "员工应在出差结束后多少个工作日内提交完整报销单？",
+    "answer": "10 个工作日内。",
+    "relevant_documents": [
+      "expense_policy.md"
+    ],
+    "relevant_sections": [
+      "报销时限"
+    ],
+    "type": "single-hop"
+  },
+  {
+    "qid": 5,
+    "question": "生产数据库的常规 Schema 变更需要哪两类人员审批？",
+    "answer": "数据库负责人 DBA 和当周值班 SRE。",
+    "relevant_documents": [
+      "database_policy.md"
+    ],
+    "relevant_sections": [
+      "生产数据库变更"
+    ],
+    "type": "single-hop"
+  },
+  {
+    "qid": 6,
+    "question": "普通研发人员排障时申请生产数据库临时只读权限，单次授权最长多久？",
+    "answer": "最长 2 小时。",
+    "relevant_documents": [
+      "database_policy.md"
+    ],
+    "relevant_sections": [
+      "人员访问"
+    ],
+    "type": "single-hop"
+  },
+  {
+    "qid": 7,
+    "question": "NebulaTech 常规 Production 应用发布窗口是每周什么时间？",
+    "answer": "每周三 20:00 至 22:00。",
+    "relevant_documents": [
+      "deployment_manual.md"
+    ],
+    "relevant_sections": [
+      "发布窗口"
+    ],
+    "type": "single-hop"
+  },
+  {
+    "qid": 8,
+    "question": "发布后 5xx 错误率超过多少时必须启动回滚？",
+    "answer": "超过 5%。",
+    "relevant_documents": [
+      "deployment_manual.md"
+    ],
+    "relevant_sections": [
+      "自动与人工回滚条件"
+    ],
+    "type": "single-hop"
+  },
+  {
+    "qid": 9,
+    "question": "P0 告警必须在多少分钟内由值班人员确认？",
+    "answer": "5 分钟内。",
+    "relevant_documents": [
+      "incident_response.md"
+    ],
+    "relevant_sections": [
+      "首次确认时限"
+    ],
+    "type": "single-hop"
+  },
+  {
+    "qid": 10,
+    "question": "P0 和 P1 事故应在恢复后多久完成书面事故复盘？",
+    "answer": "2 个工作日内。",
+    "relevant_documents": [
+      "incident_response.md"
+    ],
+    "relevant_sections": [
+      "事故复盘"
+    ],
+    "type": "single-hop"
+  },
+  {
+    "qid": 11,
+    "question": "公司统一身份系统密码最少需要多少个字符？",
+    "answer": "14 个字符。",
+    "relevant_documents": [
+      "security_policy.md"
+    ],
+    "relevant_sections": [
+      "密码复杂度"
+    ],
+    "type": "single-hop"
+  },
+  {
+    "qid": 12,
+    "question": "长期 API Key 的最长有效期是多少？",
+    "answer": "90 天。",
+    "relevant_documents": [
+      "security_policy.md"
+    ],
+    "relevant_sections": [
+      "API Key 生命周期"
+    ],
+    "type": "single-hop"
+  },
+  {
+    "qid": 13,
+    "question": "Pro 套餐每个 Workspace 的默认 API Rate Limit 是多少？",
+    "answer": "每分钟 600 个请求。",
+    "relevant_documents": [
+      "api_guidelines.md"
+    ],
+    "relevant_sections": [
+      "套餐限流"
+    ],
+    "type": "single-hop"
+  },
+  {
+    "qid": 14,
+    "question": "公开 API 主版本进入 Deprecated 状态后至少还要提供多少天服务？",
+    "answer": "至少 180 个自然日。",
+    "relevant_documents": [
+      "api_guidelines.md"
+    ],
+    "relevant_sections": [
+      "废弃周期"
+    ],
+    "type": "single-hop"
+  },
+  {
+    "qid": 15,
+    "question": "Basic 套餐每个 Workspace 最多包含多少名成员？",
+    "answer": "10 名成员。",
+    "relevant_documents": [
+      "product_manual.md"
+    ],
+    "relevant_sections": [
+      "Basic"
+    ],
+    "type": "single-hop"
+  },
+  {
+    "qid": 16,
+    "question": "Enterprise 套餐的单个文件导入大小上限是多少？",
+    "answer": "1 GB。",
+    "relevant_documents": [
+      "product_manual.md"
+    ],
+    "relevant_sections": [
+      "支持格式与大小"
+    ],
+    "type": "single-hop"
+  },
+  {
+    "qid": 17,
+    "question": "Production 数据库的 RPO 和 RTO 分别是多少？",
+    "answer": "RPO 为 15 分钟，RTO 为 2 小时。",
+    "relevant_documents": [
+      "backup_recovery.md"
+    ],
+    "relevant_sections": [
+      "RPO",
+      "RTO"
+    ],
+    "type": "single-hop"
+  },
+  {
+    "qid": 18,
+    "question": "Production 每日全量 Backup 保留多少个自然日？",
+    "answer": "35 个自然日。",
+    "relevant_documents": [
+      "backup_recovery.md"
+    ],
+    "relevant_sections": [
+      "Backup 保留周期"
+    ],
+    "type": "single-hop"
+  },
+  {
+    "qid": 19,
+    "question": "新的每周 On-call 值班周期在周一几点生效？",
+    "answer": "周一 10:00。",
+    "relevant_documents": [
+      "oncall_manual.md"
+    ],
+    "relevant_sections": [
+      "周期与交接"
+    ],
+    "type": "single-hop"
+  },
+  {
+    "qid": 20,
+    "question": "P0 或 P1 告警发送给 Primary 后多久未确认会自动升级给 Secondary？",
+    "answer": "5 分钟未确认时。",
+    "relevant_documents": [
+      "oncall_manual.md"
+    ],
+    "relevant_sections": [
+      "Primary 到 Secondary"
+    ],
+    "type": "single-hop"
+  },
+  {
+    "qid": 21,
+    "question": "测试数据库的 Schema 变更需要谁审批？",
+    "answer": "发起人的直属 Team Lead。",
+    "relevant_documents": [
+      "database_policy.md"
+    ],
+    "relevant_sections": [
+      "Testing Schema 变更"
+    ],
+    "type": "hard-negative"
+  },
+  {
+    "qid": 22,
+    "question": "发布到 Staging 环境前需要谁进行人工审批？",
+    "answer": "发起人的直属 Team Lead。",
+    "relevant_documents": [
+      "deployment_manual.md"
+    ],
+    "relevant_sections": [
+      "Staging 发布审批"
+    ],
+    "type": "hard-negative"
+  },
+  {
+    "qid": 23,
+    "question": "海外出差的酒店含税上限是多少？",
+    "answer": "每人每晚人民币等值 1200 元。",
+    "relevant_documents": [
+      "expense_policy.md"
+    ],
+    "relevant_sections": [
+      "酒店与餐补"
+    ],
+    "type": "hard-negative"
+  },
+  {
+    "qid": 24,
+    "question": "个人 SSH 公钥最长登记有效期是多少？",
+    "answer": "365 天。",
+    "relevant_documents": [
+      "security_policy.md"
+    ],
+    "relevant_sections": [
+      "SSH Key 要求"
+    ],
+    "type": "hard-negative"
+  },
+  {
+    "qid": 25,
+    "question": "Staging Snapshot 的保留周期是多少？",
+    "answer": "7 个自然日。",
+    "relevant_documents": [
+      "backup_recovery.md"
+    ],
+    "relevant_sections": [
+      "Snapshot 保留周期"
+    ],
+    "type": "hard-negative"
+  },
+  {
+    "qid": 26,
+    "question": "若 P0 事故需要紧急修改 Production 数据库，紧急数据库变更需要谁批准，并且事故恢复后多久必须完成书面复盘？",
+    "answer": "紧急数据库变更需要 DBA 和当次事故的 Incident Commander 双人批准；事故恢复后 2 个工作日内必须完成书面复盘。",
+    "relevant_documents": [
+      "database_policy.md",
+      "incident_response.md"
+    ],
+    "relevant_sections": [
+      "紧急数据库变更",
+      "事故复盘"
+    ],
+    "type": "multi-hop"
+  },
+  {
+    "qid": 27,
+    "question": "一次 Production 发布导致 35% 活跃用户的关键功能不可用，同时 5xx 错误率连续 5 分钟为 6%。该事故等级是什么，发布系统必须执行什么动作以及时限是什么？",
+    "answer": "事故等级为 P1；必须启动回滚，并在满足回滚条件后 15 分钟内回滚到上一稳定版本。",
+    "relevant_documents": [
+      "incident_response.md",
+      "deployment_manual.md"
+    ],
+    "relevant_sections": [
+      "P1",
+      "自动与人工回滚条件"
+    ],
+    "type": "multi-hop"
+  },
+  {
+    "qid": 28,
+    "question": "一个经批准的外部服务到服务集成使用哪种认证凭证？如果该凭证泄露，必须在多久内完成什么处置？",
+    "answer": "使用 Workspace API Key；泄露后必须在 15 分钟内撤销旧 Key，并创建新 Key。",
+    "relevant_documents": [
+      "api_guidelines.md",
+      "security_policy.md"
+    ],
+    "relevant_sections": [
+      "服务间认证",
+      "API Key 生命周期"
+    ],
+    "type": "multi-hop"
+  },
+  {
+    "qid": 29,
+    "question": "Enterprise Workspace 的默认 API 限额是多少？在该 Workspace 中，哪种角色可以发起 Workspace 级数据导出？",
+    "answer": "默认 API 限额为每分钟 3000 个请求；只有 Admin 可以发起 Workspace 级数据导出。",
+    "relevant_documents": [
+      "api_guidelines.md",
+      "product_manual.md"
+    ],
+    "relevant_sections": [
+      "套餐限流",
+      "导出权限"
+    ],
+    "type": "multi-hop"
+  },
+  {
+    "qid": 30,
+    "question": "如果 Production 数据库出现确认的不可逆客户数据丢失，事故等级是什么？对应 Production 数据恢复的 RPO 和 RTO 分别是多少？",
+    "answer": "事故等级为 P0；Production 数据恢复的 RPO 为 15 分钟，RTO 为 2 小时。",
+    "relevant_documents": [
+      "incident_response.md",
+      "backup_recovery.md"
+    ],
+    "relevant_sections": [
+      "P0",
+      "RPO",
+      "RTO"
+    ],
+    "type": "multi-hop"
+  }
+]

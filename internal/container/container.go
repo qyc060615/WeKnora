@@ -83,6 +83,8 @@ import (
 	"github.com/Tencent/WeKnora/internal/models/chat"
 	"github.com/Tencent/WeKnora/internal/models/embedding"
 	"github.com/Tencent/WeKnora/internal/models/limiter"
+	modelpricing "github.com/Tencent/WeKnora/internal/models/pricing"
+	"github.com/Tencent/WeKnora/internal/models/usage"
 	"github.com/Tencent/WeKnora/internal/models/utils/ollama"
 	"github.com/Tencent/WeKnora/internal/router"
 	"github.com/Tencent/WeKnora/internal/storageallowlist"
@@ -120,6 +122,7 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(initFileService))
 	must(container.Provide(initRedisClient))
 	must(container.Provide(initAntsPool))
+	must(container.Invoke(registerEmbeddingCache))
 
 	must(container.Invoke(registerLangfuseCleanup))
 
@@ -180,6 +183,10 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(repository.NewMemoryRepository))
 	must(container.Provide(repository.NewTaskPendingOpsRepository))
 	must(container.Provide(repository.NewTaskDeadLetterRepository))
+	must(container.Provide(repository.NewEvaluationRunRepository))
+	must(container.Provide(repository.NewModelUsageRepository))
+	must(container.Provide(repository.NewPricingRepository))
+	must(container.Invoke(registerModelUsageRecorder))
 
 	// MCP manager for managing MCP client connections
 	logger.Debugf(ctx, "[Container] Registering MCP manager...")
@@ -216,6 +223,8 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(service.NewModelService))
 	must(container.Provide(service.NewDatasetService))
 	must(container.Provide(service.NewEvaluationService))
+	must(container.Provide(service.NewBenchmarkResultService))
+	must(container.Provide(service.NewModelUsageAnalyticsService))
 	must(container.Provide(service.NewUserService))
 	must(container.Provide(service.NewSystemSettingService))
 	must(container.Provide(func(
@@ -412,6 +421,7 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	}))
 	must(container.Provide(handler.NewMeEnvVarHandler))
 	must(container.Provide(handler.NewEvaluationHandler))
+	must(container.Provide(handler.NewModelUsageAnalyticsHandler))
 	must(container.Provide(handler.NewInitializationHandler))
 	must(container.Provide(handler.NewAuthHandler))
 	must(container.Provide(handler.NewSystemHandler))
@@ -622,6 +632,30 @@ func initRedisClient() (*redis.Client, error) {
 	}
 
 	return client, nil
+}
+
+func registerModelUsageRecorder(repo interfaces.ModelUsageRepository, pricingRepo interfaces.PricingRepository) {
+	usage.SetRecorder(usage.NewRecorder(repo, modelpricing.NewProcessor(pricingRepo)))
+	logger.Infof(context.Background(), "[ModelUsage] recorder installed")
+}
+
+func registerEmbeddingCache(redisClient *redis.Client) {
+	cacheConfig, warnings := embedding.LoadEmbeddingCacheConfigFromEnv()
+	for _, warning := range warnings {
+		logger.Warnf(context.Background(), "[EmbeddingCache] %v", warning)
+	}
+	if !cacheConfig.Enabled {
+		embedding.ConfigureEmbeddingCache(nil, cacheConfig)
+		logger.Infof(context.Background(), "[EmbeddingCache] disabled")
+		return
+	}
+	if redisClient == nil {
+		embedding.ConfigureEmbeddingCache(nil, cacheConfig)
+		logger.Warnf(context.Background(), "[EmbeddingCache] enabled but Redis is unavailable; bypassing cache")
+		return
+	}
+	embedding.ConfigureEmbeddingCache(embedding.NewRedisEmbeddingCache(redisClient), cacheConfig)
+	logger.Infof(context.Background(), "[EmbeddingCache] enabled ttl=%s prefix=%s", cacheConfig.TTL, cacheConfig.Prefix)
 }
 
 // initDatabase initializes database connection

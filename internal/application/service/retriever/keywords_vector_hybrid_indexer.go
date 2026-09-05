@@ -72,7 +72,10 @@ func (v *KeywordsVectorHybridRetrieveEngineService) Index(ctx context.Context,
 	params := make(map[string]any)
 	embeddingMap := make(map[string][]float32)
 	if slices.Contains(retrieverTypes, types.VectorRetrieverType) {
-		embedding, err := embedder.Embed(ctx, sanitizeForEmbedding(ctx, indexInfo.Content))
+		embedding, err := embedder.Embed(
+			types.WithLLMCallMetadata(ctx, "index_embedding", ""),
+			sanitizeForEmbedding(ctx, indexInfo.Content),
+		)
 		if err != nil {
 			return err
 		}

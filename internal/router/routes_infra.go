@@ -88,6 +88,13 @@ func RegisterEvaluationRoutes(r *gin.RouterGroup, handler *handler.EvaluationHan
 	}
 }
 
+// RegisterModelUsageAnalyticsRoutes exposes tenant-wide, read-only model
+// infrastructure analytics. Tenant scope always comes from authentication.
+func RegisterModelUsageAnalyticsRoutes(r *gin.RouterGroup, handler *handler.ModelUsageAnalyticsHandler, g *rbacGuards) {
+	routes := g.apiKeyGroup(r.Group("/model-usage"), apiKeyManageModels(apiKeyFullAccess()))
+	routes.GET("/analytics", g.Viewer(), handler.GetAnalytics)
+}
+
 func RegisterInitializationRoutes(r *gin.RouterGroup, handler *handler.InitializationHandler, g *rbacGuards) {
 	// 初始化接口
 	// GetCurrentConfigByKB 是只读，Viewer+ 即可（KB 受限 key 可读其范围内的 KB）。
