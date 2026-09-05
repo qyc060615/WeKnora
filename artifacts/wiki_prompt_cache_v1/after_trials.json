@@ -1,0 +1,117 @@
+{
+  "after_commit": "22f9120216d554181db041b24e3e191363c34366",
+  "trials": [
+    {
+      "mode": "AFTER",
+      "pair": 1,
+      "marker": "wiki-cache-exp-verify",
+      "wiki_pages": 49,
+      "by_purpose": {
+        "wiki_candidate_slug": {
+          "n": 4,
+          "hit": 1,
+          "miss": 3,
+          "read": 2048,
+          "miss_tok": 6690,
+          "in_tok": 8738
+        },
+        "wiki_chunk_citation": {
+          "n": 4,
+          "hit": 3,
+          "miss": 1,
+          "read": 1920,
+          "miss_tok": 6878,
+          "in_tok": 8798
+        },
+        "wiki_summary": {
+          "n": 4,
+          "hit": 3,
+          "miss": 1,
+          "read": 1536,
+          "miss_tok": 5125,
+          "in_tok": 6661
+        },
+        "wiki_page_modify": {
+          "n": 44,
+          "hit": 40,
+          "miss": 4,
+          "read": 63232,
+          "miss_tok": 81149,
+          "in_tok": 144381
+        },
+        "wiki_taxonomy_plan": {
+          "n": 1,
+          "hit": 0,
+          "miss": 1,
+          "read": 0,
+          "miss_tok": 2816,
+          "in_tok": 2816
+        },
+        "wiki_index_intro": {
+          "n": 1,
+          "hit": 0,
+          "miss": 1,
+          "read": 0,
+          "miss_tok": 628,
+          "in_tok": 628
+        }
+      }
+    },
+    {
+      "mode": "AFTER",
+      "pair": 2,
+      "marker": "wiki-cache-exp-002",
+      "wiki_pages": 49,
+      "by_purpose": {
+        "wiki_candidate_slug": {
+          "n": 4,
+          "hit": 4,
+          "miss": 0,
+          "read": 8576,
+          "miss_tok": 162,
+          "in_tok": 8738
+        },
+        "wiki_chunk_citation": {
+          "n": 4,
+          "hit": 4,
+          "miss": 0,
+          "read": 2560,
+          "miss_tok": 6360,
+          "in_tok": 8920
+        },
+        "wiki_summary": {
+          "n": 4,
+          "hit": 4,
+          "miss": 0,
+          "read": 2048,
+          "miss_tok": 4725,
+          "in_tok": 6773
+        },
+        "wiki_page_modify": {
+          "n": 44,
+          "hit": 44,
+          "miss": 0,
+          "read": 70912,
+          "miss_tok": 75186,
+          "in_tok": 146098
+        },
+        "wiki_taxonomy_plan": {
+          "n": 1,
+          "hit": 0,
+          "miss": 1,
+          "read": 0,
+          "miss_tok": 2786,
+          "in_tok": 2786
+        },
+        "wiki_index_intro": {
+          "n": 2,
+          "hit": 0,
+          "miss": 2,
+          "read": 0,
+          "miss_tok": 1344,
+          "in_tok": 1344
+        }
+      }
+    }
+  ]
+}
