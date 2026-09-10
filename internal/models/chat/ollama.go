@@ -140,6 +140,7 @@ func (c *OllamaChat) Chat(ctx context.Context, messages []Message, opts *ChatOpt
 	var promptTokens, completionTokens int
 
 	// 使用 Ollama 客户端发送请求
+	noteChatProviderRequest(ctx)
 	err := c.ollamaService.Chat(ctx, chatReq, func(resp ollamaapi.ChatResponse) error {
 		responseContent = resp.Message.Content
 		// 当 Content 为空但 Thinking 有内容时（如推理模型未正确配置 thinking 参数），使用 Thinking 作为兜底
@@ -164,6 +165,9 @@ func (c *OllamaChat) Chat(ctx context.Context, messages []Message, opts *ChatOpt
 		PromptTokens:     promptTokens,
 		CompletionTokens: completionTokens,
 		TotalTokens:      promptTokens + completionTokens,
+	}
+	if promptTokens > 0 || completionTokens > 0 {
+		usage.TokenProvenance = types.TokenProvenanceDerived
 	}
 	usage.MarkPromptCacheUnsupported()
 	logUsage(ctx, c.modelName, &usage)
@@ -200,6 +204,7 @@ func (c *OllamaChat) ChatStream(
 		defer close(streamChan)
 
 		var thinking thinkingEmitter
+		noteChatProviderRequest(ctx)
 		err := c.ollamaService.Chat(ctx, chatReq, func(resp ollamaapi.ChatResponse) error {
 			// 发送思考内容（支持 Qwen3、DeepSeek 等推理模型）
 			if resp.Message.Thinking != "" {
@@ -260,6 +265,7 @@ func (c *OllamaChat) ChatStream(
 						PromptTokens:     resp.PromptEvalCount,
 						CompletionTokens: resp.EvalCount,
 						TotalTokens:      resp.PromptEvalCount + resp.EvalCount,
+						TokenProvenance:  types.TokenProvenanceDerived,
 					}
 					usage.MarkPromptCacheUnsupported()
 				}

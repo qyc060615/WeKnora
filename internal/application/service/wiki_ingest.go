@@ -2516,7 +2516,20 @@ func (s *wikiIngestService) generateWithTemplate(ctx context.Context, chatModel 
 		return "", fmt.Errorf("parse template: %w", err)
 	}
 
-	maskedData, urlMap := maskTemplateDataImageURLs(data)
+	// Assign stable-prefix image placeholders before page-specific images.
+	var stableImageFields []string
+	if promptTpl == agent.WikiPageModifyUserPrompt {
+		stableImageFields = []string{"CustomInstructions", "SharedSourceContexts"}
+	}
+	maskedData, urlMap := maskTemplateDataImageURLs(data, stableImageFields...)
+	if promptTpl == agent.WikiCandidateSlugPrompt || promptTpl == agent.WikiSummaryPrompt {
+		if len(maskedData) == 0 {
+			maskedData = make(map[string]string)
+		}
+		maskedData["BusinessInstructions"] = types.AppendCustomPromptInstructions(
+			"", maskedData["CustomInstructions"], maskedData["InstructionScope"],
+		)
+	}
 
 	var buf strings.Builder
 	if err := tmpl.Execute(&buf, maskedData); err != nil {
@@ -2536,7 +2549,7 @@ func (s *wikiIngestService) generateWithTemplate(ctx context.Context, chatModel 
 			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: prompt},
 		}
-	} else {
+	} else if promptTpl != agent.WikiCandidateSlugPrompt && promptTpl != agent.WikiSummaryPrompt {
 		messages[0].Content = types.AppendCustomPromptInstructions(
 			prompt, maskedData["CustomInstructions"], maskedData["InstructionScope"],
 		)
@@ -2552,6 +2565,13 @@ func (s *wikiIngestService) generateWithTemplate(ctx context.Context, chatModel 
 		if tenantID, ok := types.TenantIDFromContext(ctx); ok {
 			warmupKey = chat.BuildPromptCacheKey(
 				tenantID, chatModel.GetModelID(), purpose, prefixFingerprint,
+			)
+			// GetModelName is the resolved outbound name (including remote_model_name).
+			// Keep local warmup identity unchanged; provider routing also distinguishes
+			// effective models when a model configuration is updated in place.
+			opts.PromptCacheKey = chat.BuildPromptCacheKey(
+				tenantID, chat.FingerprintPromptPrefix(chatModel.GetModelID(), chatModel.GetModelName()),
+				purpose, prefixFingerprint,
 			)
 		}
 	}
@@ -2958,7 +2978,7 @@ var (
 	imagePlaceholderTokenRE = regexp.MustCompile(`wkimg:[A-Za-z0-9_-]+`)
 )
 
-func maskTemplateDataImageURLs(data map[string]string) (map[string]string, map[string]string) {
+func maskTemplateDataImageURLs(data map[string]string, stableFields ...string) (map[string]string, map[string]string) {
 	if len(data) == 0 {
 		return data, nil
 	}
@@ -2973,8 +2993,13 @@ func maskTemplateDataImageURLs(data map[string]string) (map[string]string, map[s
 	}
 	sort.Strings(keys)
 
-	for _, key := range keys {
-		masked[key] = maskImageURLsWithState(data[key], urlToToken, tokenToURL)
+	for _, key := range append(stableFields, keys...) {
+		if _, done := masked[key]; done {
+			continue
+		}
+		if value, exists := data[key]; exists {
+			masked[key] = maskImageURLsWithState(value, urlToToken, tokenToURL)
+		}
 	}
 
 	return masked, tokenToURL

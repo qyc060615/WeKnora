@@ -13,6 +13,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/handler/dto"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/models/chat"
+	"github.com/Tencent/WeKnora/internal/models/embedding"
 	"github.com/Tencent/WeKnora/internal/models/provider"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
@@ -483,7 +484,9 @@ func (h *ModelHandler) DebugModel(c *gin.Context) {
 			writeModelDebugResult(c, started, requestPreview, nil, callErr, observations)
 			return
 		}
-		vector, callErr := instance.Embed(ctx, input)
+		// Model debug is a provider probe: never let a cache hit hide an
+		// unavailable or misconfigured upstream.
+		vector, callErr := instance.Embed(embedding.WithEmbeddingCacheBypass(ctx), input)
 		observations["dimension"] = len(vector)
 		writeModelDebugResult(c, started, requestPreview, vector, callErr, observations)
 	case types.ModelTypeRerank:

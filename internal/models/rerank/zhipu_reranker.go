@@ -54,8 +54,8 @@ type ZhipuRankResult struct {
 
 // ZhipuUsage contains information about token usage in the Zhipu API request
 type ZhipuUsage struct {
-	TotalTokens  int `json:"total_tokens"`  // Total tokens consumed
-	PromptTokens int `json:"prompt_tokens"` // Prompt tokens
+	TotalTokens  *int `json:"total_tokens"`  // nil means absent; non-nil zero is reported
+	PromptTokens *int `json:"prompt_tokens"` // nil means absent; non-nil zero is reported
 }
 
 // NewZhipuReranker creates a new instance of Zhipu reranker with the provided configuration
@@ -106,6 +106,7 @@ func (r *ZhipuReranker) Rerank(ctx context.Context, query string, documents []st
 
 	logger.Debugf(ctx, "%s", buildRerankRequestDebug(r.modelName, r.baseURL, query, documents))
 
+	noteProviderRequest(ctx, len(documents))
 	resp, err := r.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("do request: %w", err)
@@ -126,6 +127,7 @@ func (r *ZhipuReranker) Rerank(ctx context.Context, query string, documents []st
 	if err := json.Unmarshal(body, &response); err != nil {
 		return nil, fmt.Errorf("unmarshal response: %w", err)
 	}
+	noteRerankTokens(ctx, response.Usage.PromptTokens, response.Usage.TotalTokens)
 
 	// Convert Zhipu results to standard RankResult format
 	results := make([]RankResult, len(response.Results))

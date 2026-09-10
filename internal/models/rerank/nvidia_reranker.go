@@ -104,6 +104,7 @@ func (r *NvidiaReranker) Rerank(ctx context.Context, query string, documents []s
 		r.baseURL, string(jsonData),
 	)
 
+	noteProviderRequest(ctx, len(documents))
 	resp, err := r.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("do request: %w", err)

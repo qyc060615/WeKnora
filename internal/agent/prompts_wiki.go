@@ -59,16 +59,6 @@ Output format:
 // the document content provided below.
 const WikiSummaryPrompt = `You are a wiki editor. Given the following document content, create a structured wiki summary page in Markdown format.
 
-<document>
-<content>
-{{.Content}}
-</content>
-</document>
-
-<available_wiki_pages>
-{{.ExtractedSlugs}}
-</available_wiki_pages>
-
 <instructions>
 1. The FIRST line of your output MUST be: SUMMARY: {one sentence, 15-40 words, describing what this document is about — for wiki index listing}
 2. After the SUMMARY line, write a comprehensive summary of the document in Markdown format.
@@ -82,7 +72,17 @@ const WikiSummaryPrompt = `You are a wiki editor. Given the following document c
 10. **Empty content rule**: If the <content> block above is empty, contains only image references with no extracted text, or otherwise carries no substantive information, output exactly: "SUMMARY: No textual content was extractable from this document." followed by a brief note explaining that the document could not be summarised. Do NOT invent a topic, do NOT guess from any other clue.
 </instructions>
 
-Output the SUMMARY line first, then the Markdown content. Do not include any other preamble.`
+Output the SUMMARY line first, then the Markdown content. Do not include any other preamble.{{.BusinessInstructions}}
+
+<document>
+<content>
+{{.Content}}
+</content>
+</document>
+
+<available_wiki_pages>
+{{.ExtractedSlugs}}
+</available_wiki_pages>`
 
 // WikiKnowledgeExtractPrompt extracts both entities and concepts in a single LLM call.
 // Returns a JSON object with "entities" and "concepts" arrays.
@@ -171,16 +171,6 @@ Output ONLY valid JSON. Example:
 // longer has to carry full facts per item, it stays cheap even for long docs.
 const WikiCandidateSlugPrompt = `You are a knowledge extraction system. Analyze the following document and list all significant entities AND key concepts as a lightweight candidate set. Another pass will later attach concrete supporting chunks to each item, so you do NOT need to write exhaustive per-item facts here.
 
-<document>
-<content>
-{{.Content}}
-</content>
-</document>
-
-<previous_slugs>
-{{.PreviousSlugs}}
-</previous_slugs>
-
 <instructions>
 Return a JSON object with two arrays: "entities" and "concepts".
 **IMPORTANT: Write ALL names, descriptions, and details in {{.Language}}**.
@@ -246,7 +236,17 @@ Output ONLY valid JSON. Example:
       "details": "Retrieves documents, then feeds them as context to an LLM."
     }
   ]
-}`
+}{{.BusinessInstructions}}
+
+<document>
+<content>
+{{.Content}}
+</content>
+</document>
+
+<previous_slugs>
+{{.PreviousSlugs}}
+</previous_slugs>`
 
 // WikiChunkCitationPrompt (Pass 1..N of the chunk-cited pipeline) asks the LLM
 // to read a batch of chunks and, for each candidate entity/concept, list the

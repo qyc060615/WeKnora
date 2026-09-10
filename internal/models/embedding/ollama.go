@@ -110,6 +110,7 @@ func (e *OllamaEmbedder) BatchEmbed(ctx context.Context, texts []string) ([][]fl
 
 	// Send request
 	startTime := time.Now()
+	noteEmbeddingProviderRequest(ctx)
 	resp, err := e.ollamaService.Embeddings(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get embedding vectors: %w", err)

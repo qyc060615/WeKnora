@@ -1,0 +1,67 @@
+{
+  "experiment": "wiki_prompt_cache_v1",
+  "repository": "qyc060615/WeKnora",
+  "branch": "feat/topic3-evaluation",
+  "before_commit": "3f9a054ec94e92c3089a6574281aa09760068e38",
+  "after_commit": "22f9120216d554181db041b24e3e191363c34366",
+  "provider": {
+    "config_provider": "generic",
+    "effective_provider": "deepseek",
+    "endpoint": "https://api.deepseek.com",
+    "model_config_id": "5a50bf0a-60f9-4340-974b-0bd85c80b286",
+    "model_name": "deepseek-v4-pro",
+    "resolved_model_name": "deepseek-v4-pro",
+    "source": "remote",
+    "cache_mechanism": "DeepSeek automatic prefix caching (Context Caching on Disk)"
+  },
+  "tenant_id": 10000,
+  "corpus": {
+    "directory": "dataset/benchmark_sources/nebultech_v1",
+    "files": [
+      {"file": "security_policy.md", "sha256": "4a5276f4ae457b43bbf6d0fca8fdf5c5288f20a839ef68212b5f63fb1e2ce09d"},
+      {"file": "incident_response.md", "sha256": "b9ea5c8f51193144e36092eda8c03018003fa5d85afc4e8574f92be85c2aa6ac"},
+      {"file": "database_policy.md", "sha256": "b9e453244ba7483a2f85d8ffa99a9868996e80735bfe9fcce54afa70006c34c8"},
+      {"file": "api_guidelines.md", "sha256": "3ea4929052780ee02acac78fa672713417637e6abb8d8b985b8c51eaf8492fa2"}
+    ],
+    "language": "zh-CN",
+    "note": "纯文本 Markdown，无图片引用；chunk 切分确定（chunk_size=512, overlap=80, parent-child, strategy=auto）"
+  },
+  "wiki_config": {
+    "synthesis_model_id": "5a50bf0a-60f9-4340-974b-0bd85c80b286",
+    "extraction_granularity": "standard",
+    "ingest_batch_size": 5,
+    "ingest_map_parallel": 10,
+    "ingest_reduce_parallel": 10,
+    "ingest_max_inflight": 4,
+    "max_pages_per_ingest": 0,
+    "content_instructions_marker": "per-pair cohort marker (wiki-cache-exp-verify / wiki-cache-exp-002)"
+  },
+  "frozen_control_variables": {
+    "temperature": 0.3,
+    "thinking": false,
+    "max_tokens": 32768,
+    "llm_max_attempts": 3,
+    "llm_backoff_base_seconds": 2,
+    "chunk_size": 512,
+    "chunk_overlap": 80,
+    "embedding_model_id": "c24c212d-ae14-4bed-b4c3-be95eeb36464",
+    "summary_model_id": "5a50bf0a-60f9-4340-974b-0bd85c80b286",
+    "machine": "WSL2, same host for both BEFORE and AFTER",
+    "execution_command": "go run ./cmd/server (dev, host network)"
+  },
+  "trial_plan": {
+    "order": "AB/BA (pair 1: BEFORE→AFTER run as AFTER→BEFORE, pair 2: AFTER→BEFORE)",
+    "pairs": [
+      {"pair": 1, "marker": "wiki-cache-exp-verify", "sequence": "AFTER then BEFORE (both cold)"},
+      {"pair": 2, "marker": "wiki-cache-exp-002", "sequence": "AFTER then BEFORE (instructions prefix warmed by prior runs)"}
+    ],
+    "trials_per_mode": 2,
+    "kb_per_trial": "fresh KB per trial (same tenant 10000), full re-ingest"
+  },
+  "provider_cache_isolation": {
+    "strategy": "AB/BA + per-pair neutral cohort marker in WikiConfig.ContentInstructions",
+    "marker_location": "CustomInstructions (appended/prepended in the static instruction region, before dynamic document content in AFTER, after prompt in BEFORE)",
+    "limitation": "marker does NOT isolate the shared static <instructions> prefix across pairs; DeepSeek cache persists instructions prefix, so pair-2 runs are 'warm' for both modes"
+  },
+  "cost_note": "model_pricing table is empty in this environment; model_usage_cost is expected 'unpriced' (NULL costs). Cost dimension reported as unavailable from DB truth."
+}

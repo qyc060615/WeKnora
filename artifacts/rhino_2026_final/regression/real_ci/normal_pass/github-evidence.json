@@ -1,0 +1,30 @@
+{
+  "evidence_type": "github_actions_metadata",
+  "result": "PASS",
+  "branch": "feat/topic3-evaluation",
+  "head_sha": "2a7607098c05f32843c4bcd59766ee3d5ddf2eff",
+  "pull_request": {
+    "number": 1,
+    "url": "https://github.com/qyc060615/WeKnora/pull/1",
+    "base_ref": "main",
+    "head_ref": "feat/topic3-evaluation"
+  },
+  "workflow": {
+    "name": "Regression",
+    "run_id": 34198435447,
+    "run_url": "https://github.com/qyc060615/WeKnora/actions/runs/34198435447",
+    "conclusion": "success",
+    "job_id": 101971475501,
+    "job_name": "Benchmark quality regression gate",
+    "job_conclusion": "success",
+    "benchmark_step": "success",
+    "comparison_step": "success"
+  },
+  "artifact": {
+    "name": "regression-report",
+    "id": 10044963180,
+    "size_in_bytes": 892,
+    "expired": false,
+    "digest": "sha256:b1aea9d8076fd8946fbb1cebc9ae8645baa268ce30d08a9b78f907040585ddf8"
+  }
+}

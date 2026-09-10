@@ -168,6 +168,9 @@ func (e *WeKnoraCloudEmbedder) effectiveModelName() string {
 	return e.modelName
 }
 
+// EffectiveModelName returns the model name sent to the remote provider.
+func (e *WeKnoraCloudEmbedder) EffectiveModelName() string { return e.effectiveModelName() }
+
 func (e *WeKnoraCloudEmbedder) GetModelName() string { return e.modelName }
 func (e *WeKnoraCloudEmbedder) GetModelID() string   { return e.modelID }
 func (e *WeKnoraCloudEmbedder) GetDimensions() int   { return e.dimensions }

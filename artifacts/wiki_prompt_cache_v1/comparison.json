@@ -1,0 +1,214 @@
+{
+  "before_commit": "3f9a054ec94e92c3089a6574281aa09760068e38",
+  "after_commit": "22f9120216d554181db041b24e3e191363c34366",
+  "wiki_all": {
+    "before": {
+      "logical_calls": 138,
+      "hit_calls": 120,
+      "miss_calls": 18,
+      "cache_read_tokens": 201600,
+      "cache_miss_tokens": 217374,
+      "input_tokens": 418974,
+      "call_hit_rate": 0.8696,
+      "token_cache_ratio": 0.4812
+    },
+    "after": {
+      "logical_calls": 117,
+      "hit_calls": 103,
+      "miss_calls": 14,
+      "cache_read_tokens": 152832,
+      "cache_miss_tokens": 193849,
+      "input_tokens": 346681,
+      "call_hit_rate": 0.8803,
+      "token_cache_ratio": 0.4408
+    },
+    "delta": {
+      "logical_calls": -21,
+      "hit_calls": -17,
+      "miss_calls": -4,
+      "cache_read_tokens": -48768,
+      "cache_miss_tokens": -23525,
+      "input_tokens": -72293,
+      "call_hit_rate": 0.010699999999999932,
+      "token_cache_ratio": -0.04039999999999999
+    },
+    "relative_change": {
+      "logical_calls": -0.1522,
+      "hit_calls": -0.1417,
+      "miss_calls": -0.2222,
+      "cache_read_tokens": -0.2419,
+      "cache_miss_tokens": -0.1082,
+      "input_tokens": -0.1725,
+      "call_hit_rate": 0.0123,
+      "token_cache_ratio": -0.084
+    }
+  },
+  "wiki_page_modify": {
+    "before": {
+      "logical_calls": 108,
+      "hit_calls": 108,
+      "miss_calls": 0,
+      "cache_read_tokens": 187904,
+      "cache_miss_tokens": 172267,
+      "input_tokens": 360171,
+      "call_hit_rate": 1.0,
+      "token_cache_ratio": 0.5217
+    },
+    "after": {
+      "logical_calls": 88,
+      "hit_calls": 84,
+      "miss_calls": 4,
+      "cache_read_tokens": 134144,
+      "cache_miss_tokens": 156335,
+      "input_tokens": 290479,
+      "call_hit_rate": 0.9545,
+      "token_cache_ratio": 0.4618
+    },
+    "delta": {
+      "logical_calls": -20,
+      "hit_calls": -24,
+      "miss_calls": 4,
+      "cache_read_tokens": -53760,
+      "cache_miss_tokens": -15932,
+      "input_tokens": -69692,
+      "call_hit_rate": -0.045499999999999985,
+      "token_cache_ratio": -0.059900000000000064
+    },
+    "relative_change": {
+      "logical_calls": -0.1852,
+      "hit_calls": -0.2222,
+      "miss_calls": null,
+      "cache_read_tokens": -0.2861,
+      "cache_miss_tokens": -0.0925,
+      "input_tokens": -0.1935,
+      "call_hit_rate": -0.0455,
+      "token_cache_ratio": -0.1148
+    }
+  },
+  "wiki_candidate_slug": {
+    "before": {
+      "logical_calls": 8,
+      "hit_calls": 4,
+      "miss_calls": 4,
+      "cache_read_tokens": 8576,
+      "cache_miss_tokens": 8900,
+      "input_tokens": 17476,
+      "call_hit_rate": 0.5,
+      "token_cache_ratio": 0.4907
+    },
+    "after": {
+      "logical_calls": 8,
+      "hit_calls": 5,
+      "miss_calls": 3,
+      "cache_read_tokens": 10624,
+      "cache_miss_tokens": 6852,
+      "input_tokens": 17476,
+      "call_hit_rate": 0.625,
+      "token_cache_ratio": 0.6079
+    },
+    "delta": {
+      "logical_calls": 0,
+      "hit_calls": 1,
+      "miss_calls": -1,
+      "cache_read_tokens": 2048,
+      "cache_miss_tokens": -2048,
+      "input_tokens": 0,
+      "call_hit_rate": 0.125,
+      "token_cache_ratio": 0.11719999999999997
+    },
+    "relative_change": {
+      "logical_calls": 0.0,
+      "hit_calls": 0.25,
+      "miss_calls": -0.25,
+      "cache_read_tokens": 0.2388,
+      "cache_miss_tokens": -0.2301,
+      "input_tokens": 0.0,
+      "call_hit_rate": 0.25,
+      "token_cache_ratio": 0.2388
+    }
+  },
+  "wiki_summary": {
+    "before": {
+      "logical_calls": 8,
+      "hit_calls": 0,
+      "miss_calls": 8,
+      "cache_read_tokens": 0,
+      "cache_miss_tokens": 13713,
+      "input_tokens": 13713,
+      "call_hit_rate": 0.0,
+      "token_cache_ratio": 0.0
+    },
+    "after": {
+      "logical_calls": 8,
+      "hit_calls": 7,
+      "miss_calls": 1,
+      "cache_read_tokens": 3584,
+      "cache_miss_tokens": 9850,
+      "input_tokens": 13434,
+      "call_hit_rate": 0.875,
+      "token_cache_ratio": 0.2668
+    },
+    "delta": {
+      "logical_calls": 0,
+      "hit_calls": 7,
+      "miss_calls": -7,
+      "cache_read_tokens": 3584,
+      "cache_miss_tokens": -3863,
+      "input_tokens": -279,
+      "call_hit_rate": 0.875,
+      "token_cache_ratio": 0.2668
+    },
+    "relative_change": {
+      "logical_calls": 0.0,
+      "hit_calls": null,
+      "miss_calls": -0.875,
+      "cache_read_tokens": null,
+      "cache_miss_tokens": -0.2817,
+      "input_tokens": -0.0203,
+      "call_hit_rate": null,
+      "token_cache_ratio": null
+    }
+  },
+  "wiki_chunk_citation": {
+    "before": {
+      "logical_calls": 8,
+      "hit_calls": 8,
+      "miss_calls": 0,
+      "cache_read_tokens": 5120,
+      "cache_miss_tokens": 13205,
+      "input_tokens": 18325,
+      "call_hit_rate": 1.0,
+      "token_cache_ratio": 0.2794
+    },
+    "after": {
+      "logical_calls": 8,
+      "hit_calls": 7,
+      "miss_calls": 1,
+      "cache_read_tokens": 4480,
+      "cache_miss_tokens": 13238,
+      "input_tokens": 17718,
+      "call_hit_rate": 0.875,
+      "token_cache_ratio": 0.2529
+    },
+    "delta": {
+      "logical_calls": 0,
+      "hit_calls": -1,
+      "miss_calls": 1,
+      "cache_read_tokens": -640,
+      "cache_miss_tokens": 33,
+      "input_tokens": -607,
+      "call_hit_rate": -0.125,
+      "token_cache_ratio": -0.026499999999999968
+    },
+    "relative_change": {
+      "logical_calls": 0.0,
+      "hit_calls": -0.125,
+      "miss_calls": null,
+      "cache_read_tokens": -0.125,
+      "cache_miss_tokens": 0.0025,
+      "input_tokens": -0.0331,
+      "call_hit_rate": -0.125,
+      "token_cache_ratio": -0.0948
+    }
+  }
+}

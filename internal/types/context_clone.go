@@ -41,6 +41,15 @@ var contextCloneAcrossDetach = map[ContextKey]bool{
 	// hand background work broader reach than the key it came from.
 	TenantAPIKeyScopeContextKey: true,
 
+	// Evaluation attribution. The background evaluation goroutine clones the
+	// request context, injects the run ID, and then the synchronous QA
+	// pipeline may detach again (indexing, per-QA workers, query embedding,
+	// rerank, answer generation). Dropping the run ID on any of those nested
+	// detaches would silently orphan the model usage those calls produce, so
+	// it must survive. It never rides the Asynq payload, so this does not
+	// leak attribution into asynchronous knowledge post-processing.
+	EvaluationRunIDContextKey: true,
+
 	// Session scope. SessionTenantID re-scopes session/message lookups, while
 	// SandboxTenantID keys the session→sandbox binding to the session owner
 	// even when a shared agent borrowed another tenant. Dropping the latter

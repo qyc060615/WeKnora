@@ -38,6 +38,66 @@ type RemoteAPIChat struct {
 	thinkingOverride ThinkingStrategy
 }
 
+// responseBodyCaptureSlot carries the raw response body of a single non-stream
+// SDK round-trip back to its caller. The go-openai non-stream SDK decodes the
+// response directly and discards the JSON body, which drops the field-presence
+// information needed to distinguish an omitted usage block from an explicit
+// all-zero one.
+type responseBodyCaptureSlot struct{ body []byte }
+
+type responseBodyCaptureKey struct{}
+
+func withResponseBodyCapture(ctx context.Context) (context.Context, *responseBodyCaptureSlot) {
+	slot := &responseBodyCaptureSlot{}
+	return context.WithValue(ctx, responseBodyCaptureKey{}, slot), slot
+}
+
+func responseBodyCaptureFromContext(ctx context.Context) *responseBodyCaptureSlot {
+	slot, _ := ctx.Value(responseBodyCaptureKey{}).(*responseBodyCaptureSlot)
+	return slot
+}
+
+// responseBodyCaptureRoundTripper copies the response body into the request's
+// capture slot when one is present. Requests without a slot — streaming, raw
+// HTTP and every other SDK call — pass through untouched.
+type responseBodyCaptureRoundTripper struct{ next http.RoundTripper }
+
+func (rt responseBodyCaptureRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	slot := responseBodyCaptureFromContext(req.Context())
+	if slot == nil {
+		return rt.next.RoundTrip(req)
+	}
+	resp, err := rt.next.RoundTrip(req)
+	if err != nil || resp == nil || resp.Body == nil {
+		return resp, err
+	}
+	body, readErr := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if readErr != nil {
+		return resp, readErr
+	}
+	slot.body = body
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	return resp, nil
+}
+
+// cloneClientWithBodyCapture returns a copy of client whose transport captures
+// response bodies into the request context's slot. It never mutates the shared
+// client, so raw HTTP and streaming callers that reuse the same transport are
+// unaffected.
+func cloneClientWithBodyCapture(client *http.Client) *http.Client {
+	if client == nil {
+		return client
+	}
+	base := client.Transport
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	cloned := *client
+	cloned.Transport = &responseBodyCaptureRoundTripper{next: base}
+	return &cloned
+}
+
 // NewRemoteAPIChat 创建远程 API 聊天实例
 func NewRemoteAPIChat(chatConfig *ChatConfig) (*RemoteAPIChat, error) {
 	if chatConfig.BaseURL != "" {
@@ -81,7 +141,11 @@ func NewRemoteAPIChat(chatConfig *ChatConfig) (*RemoteAPIChat, error) {
 	if len(chatConfig.CustomHeaders) > 0 {
 		sdkHTTPClient = secutils.WrapHTTPClientWithHeaders(sdkHTTPClient, chatConfig.CustomHeaders)
 	}
-	config.HTTPClient = sdkHTTPClient
+	// Non-stream chat responses are decoded by the SDK into a value Usage
+	// struct, dropping the raw body (and with it the usage field-presence
+	// signal). Capture the body per-request so the caller can tell an omitted
+	// usage block from an explicit all-zero one.
+	config.HTTPClient = cloneClientWithBodyCapture(sdkHTTPClient)
 
 	modelName := chatConfig.ModelName
 	if chatConfig.ExtraConfig != nil {
@@ -188,22 +252,27 @@ func (c *RemoteAPIChat) Chat(ctx context.Context, messages []Message, opts *Chat
 		return c.chatWithRawHTTP(timeoutCtx, endpoint, body, opts)
 	}
 
-	req := *(body.(*openai.ChatCompletionRequest))
+	req := *body.(*openai.ChatCompletionRequest)
 	c.logRequest(timeoutCtx, req, false)
-	resp, err := c.client.CreateChatCompletion(timeoutCtx, req)
+	noteChatProviderRequest(timeoutCtx)
+	// Seed a body-capture slot so we can recover the raw response and detect
+	// whether the provider actually sent a usage block (the SDK drops it).
+	captureCtx, slot := withResponseBodyCapture(timeoutCtx)
+	resp, err := c.client.CreateChatCompletion(captureCtx, req)
 	if err != nil {
 		if isMultimodalNotSupportedError(err) {
 			logger.Warnf(timeoutCtx, "[LLM Request] Model %s does not support multimodal, retrying without images", c.modelName)
 			cleaned := stripImagesFromMessages(messages)
 			req = c.shapedRequest(cleaned, opts, false)
-			resp, err = c.client.CreateChatCompletion(timeoutCtx, req)
+			noteChatProviderRequest(timeoutCtx)
+			resp, err = c.client.CreateChatCompletion(captureCtx, req)
 		}
 		if err != nil {
 			return nil, fmt.Errorf("create chat completion: %w", err)
 		}
 	}
 
-	result, err := c.parseCompletionResponse(&resp)
+	result, err := c.parseCompletionResponse(&resp, usageFieldPresent(slot.body))
 	if err != nil {
 		return nil, err
 	}
@@ -242,6 +311,7 @@ func (c *RemoteAPIChat) chatWithRawHTTP(ctx context.Context, endpoint string, cu
 	logger.Infof(ctx, "[LLM Request] Remote HTTP, endpoint=%s, model=%s",
 		endpoint, c.modelName)
 
+	noteChatProviderRequest(ctx)
 	resp, err := rawHTTPClient.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("send request: %w", err)
@@ -263,7 +333,7 @@ func (c *RemoteAPIChat) chatWithRawHTTP(ctx context.Context, endpoint string, cu
 		return nil, fmt.Errorf("decode response: %w", err)
 	}
 
-	result, err := c.parseCompletionResponse(&chatResp)
+	result, err := c.parseCompletionResponse(&chatResp, usageFieldPresent(body))
 	if err != nil {
 		return nil, err
 	}
@@ -289,7 +359,7 @@ func (c *RemoteAPIChat) ChatStream(ctx context.Context, messages []Message, opts
 		return wrapStreamCancel(ch, err, cancel)
 	}
 
-	req := *(body.(*openai.ChatCompletionRequest))
+	req := *body.(*openai.ChatCompletionRequest)
 	c.logRequest(timeoutCtx, req, true)
 
 	streamDumper := newStreamPacketDumper(c.modelName, &req)
@@ -299,12 +369,14 @@ func (c *RemoteAPIChat) ChatStream(ctx context.Context, messages []Message, opts
 
 	streamChan := make(chan types.StreamResponse)
 
+	noteChatProviderRequest(timeoutCtx)
 	stream, err := c.client.CreateChatCompletionStream(timeoutCtx, req)
 	if err != nil {
 		if isMultimodalNotSupportedError(err) {
 			logger.Warnf(timeoutCtx, "[LLM Stream] Model %s does not support multimodal, retrying without images", c.modelName)
 			cleaned := stripImagesFromMessages(messages)
 			req = c.shapedRequest(cleaned, opts, true)
+			noteChatProviderRequest(timeoutCtx)
 			stream, err = c.client.CreateChatCompletionStream(timeoutCtx, req)
 		}
 		if err != nil {
@@ -376,6 +448,7 @@ func (c *RemoteAPIChat) chatStreamWithRawHTTP(ctx context.Context, endpoint stri
 	secutils.ApplyCustomHeaders(httpReq, c.customHeaders)
 	attachPromptCacheHeaders(httpReq, promptCachePolicyFor(c.provider, c.baseURL), promptCacheSessionID(ctx, opts))
 
+	noteChatProviderRequest(ctx)
 	resp, err := rawHTTPClient.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("send request: %w", err)

@@ -1,0 +1,233 @@
+{
+  "benchmark_version": "v1.1",
+  "run": {
+    "evaluation_run_id": "449b15c1-0b49-481c-aef2-00091254d98d",
+    "task_id": "evaluation_10000_1788273787263_0cff0de6_benchmarkv1",
+    "status": 2,
+    "total": 15,
+    "finished": 15,
+    "created_at": "2026-09-01T22:43:07.263819+08:00",
+    "started_at": "2026-09-01T22:43:07.271374+08:00",
+    "finished_at": "2026-09-01T22:46:51.533151+08:00"
+  },
+  "config": {
+    "snapshot_schema_version": 1,
+    "benchmark_contract_version": "v1.1",
+    "dataset": {
+      "dataset_id": "benchmark_v1",
+      "dataset_semantic_sha256": "56fd363d797ee4c1524a5a1a2517b3b30ce955229c37784cf730c0d1dc47fd0d",
+      "corpus_count": 32,
+      "question_count": 15,
+      "qrels_count": 15,
+      "answer_count": 15,
+      "corpus_mode": "pre_chunked_passages",
+      "chunking_applied": false
+    },
+    "pipeline": {
+      "name": "rag",
+      "metrics": [
+        "precision",
+        "recall",
+        "ndcg",
+        "mrr",
+        "map",
+        "bleu",
+        "rouge"
+      ],
+      "ndcg_cutoffs": [3, 10],
+      "tokenizer": {
+        "name": "jieba",
+        "dictionary_mode": "builtin"
+      }
+    },
+    "retrieval": {
+      "vector_threshold": 0.2,
+      "keyword_threshold": 0.3,
+      "embedding_top_k": 30,
+      "rerank_top_k": 30,
+      "rerank_threshold": 0.3,
+      "retrieve_driver": "postgres"
+    },
+    "models": {
+      "embedding": {
+        "id": "c24c212d-ae14-4bed-b4c3-be95eeb36464",
+        "name": "text-embedding-v4",
+        "type": "Embedding",
+        "source": "remote",
+        "provider": "generic",
+        "interface_type": "",
+        "embedding": {
+          "dimension": 1024,
+          "truncate_prompt_tokens": 0,
+          "supports_dimension_override": true
+        }
+      },
+      "chat": {
+        "id": "5a50bf0a-60f9-4340-974b-0bd85c80b286",
+        "name": "deepseek-v4-pro",
+        "type": "KnowledgeQA",
+        "source": "remote",
+        "provider": "generic",
+        "interface_type": ""
+      },
+      "rerank": {
+        "id": "73b5c8e8-c403-4b2e-b36c-71af65db0920",
+        "name": "qwen3-rerank",
+        "type": "Rerank",
+        "source": "remote",
+        "provider": "aliyun",
+        "interface_type": ""
+      },
+      "summary": {
+        "id": "5a50bf0a-60f9-4340-974b-0bd85c80b286",
+        "name": "deepseek-v4-pro",
+        "type": "KnowledgeQA",
+        "source": "remote",
+        "provider": "generic",
+        "interface_type": ""
+      }
+    },
+    "execution": {
+      "worker_limit": 27
+    }
+  },
+  "quality": {
+    "state": "complete",
+    "retrieval": {
+      "precision": 0.1390038665038665,
+      "recall": 1,
+      "ndcg_3": 1,
+      "ndcg_10": 1,
+      "mrr": 1,
+      "map": 1
+    },
+    "answer": {
+      "bleu_1": 0.15992535731999305,
+      "bleu_2": 0.13427356324678064,
+      "bleu_4": 0.09499569553400876,
+      "rouge_1": 0.28507471524304356,
+      "rouge_2": 0.15327935593859318,
+      "rouge_l": 0.28012966029798864
+    }
+  },
+  "run_wall_clock_duration_ms": 224261,
+  "model_facts": {
+    "calls": {
+      "total": 46,
+      "chat": 15,
+      "embedding": 16,
+      "rerank": 15
+    },
+    "input_tokens": {
+      "sum": 29257,
+      "observed_calls": 15,
+      "applicable_calls": 46
+    },
+    "output_tokens": {
+      "sum": 2503,
+      "observed_calls": 15,
+      "applicable_calls": 15
+    },
+    "total_tokens": {
+      "sum": 66580,
+      "observed_calls": 30,
+      "applicable_calls": 46
+    },
+    "counters": {
+      "logical_requests": 46,
+      "provider_requests": 67,
+      "provider_inputs": 47,
+      "provider_pairs": 450,
+      "embedding_inputs": 47,
+      "cache_hits": 0,
+      "cache_misses": 0,
+      "cache_read_errors": 0,
+      "cache_write_errors": 0,
+      "queries": 15,
+      "documents": 450,
+      "pairs": 450
+    },
+    "cache_read_tokens": {
+      "sum": 0,
+      "observed_calls": 15,
+      "applicable_calls": 15
+    },
+    "cache_write_tokens": {
+      "sum": 0,
+      "observed_calls": 15,
+      "applicable_calls": 15
+    },
+    "cache_miss_tokens": {
+      "sum": 29257,
+      "observed_calls": 15,
+      "applicable_calls": 15
+    },
+    "prompt_cache_statuses": {
+      "not_recorded": 0,
+      "unreported": 0,
+      "unsupported": 0,
+      "miss": 15,
+      "hit": 0
+    },
+    "embedding_cache_statuses": {
+      "not_recorded": 0,
+      "disabled": 16,
+      "full_hit": 0,
+      "partial": 0,
+      "miss": 0
+    },
+    "latency": {
+      "sum_ms": 280447,
+      "avg_ms": 6096.673913043478,
+      "max_ms": 217941,
+      "observed_calls": 46,
+      "applicable_calls": 46
+    },
+    "observed_models": [
+      {
+        "call_type": "chat",
+        "model_id": "5a50bf0a-60f9-4340-974b-0bd85c80b286",
+        "model_name": "deepseek-v4-pro",
+        "model_type": "KnowledgeQA",
+        "model_source": "remote",
+        "resolved_provider": "generic",
+        "resolved_model_name": "deepseek-v4-pro",
+        "calls": 15
+      },
+      {
+        "call_type": "embedding",
+        "model_id": "c24c212d-ae14-4bed-b4c3-be95eeb36464",
+        "model_name": "text-embedding-v4",
+        "model_type": "Embedding",
+        "model_source": "remote",
+        "resolved_provider": "generic",
+        "resolved_model_name": "text-embedding-v4",
+        "calls": 16
+      },
+      {
+        "call_type": "rerank",
+        "model_id": "73b5c8e8-c403-4b2e-b36c-71af65db0920",
+        "model_name": "qwen3-rerank",
+        "model_type": "Rerank",
+        "model_source": "remote",
+        "resolved_provider": "aliyun",
+        "resolved_model_name": "qwen3-rerank",
+        "calls": 15
+      }
+    ],
+    "cost_by_currency": [],
+    "no_cost_row_calls": {
+      "total": 46,
+      "chat": 15,
+      "embedding": 16,
+      "rerank": 15
+    },
+    "cost_rows_without_currency": {
+      "total": 0,
+      "chat": 0,
+      "embedding": 0,
+      "rerank": 0
+    }
+  },
+  "reproducibility": "complete"
+}

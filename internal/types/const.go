@@ -88,6 +88,10 @@ const (
 	// ChatParserEngineContextKey carries the resolved parser engine
 	// from the agent's ChatParserEngineRules for chat attachment processing.
 	ChatParserEngineContextKey ContextKey = "ChatParserEngine"
+	// EvaluationRunIDContextKey carries the evaluation_runs.id of the
+	// run-level evaluation whose synchronous lifecycle a model call belongs
+	// to. Ordinary business calls have no such key. See WithEvaluationRunID.
+	EvaluationRunIDContextKey ContextKey = "EvaluationRunID"
 )
 
 // String returns the string representation of the context key
