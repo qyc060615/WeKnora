@@ -1,0 +1,38 @@
+{
+  "evidence_type": "github_actions_metadata",
+  "result": "FAIL_AS_EXPECTED",
+  "temporary_branch": "test/recall-regression-gate",
+  "parent_sha": "2a7607098c05f32843c4bcd59766ee3d5ddf2eff",
+  "degradation_sha": "b901fd309c2824cb38202e331c4eedc132f7a063",
+  "pull_request": {
+    "number": 2,
+    "url": "https://github.com/qyc060615/WeKnora/pull/2",
+    "actual_base_ref": "main",
+    "planned_base_ref": "feat/topic3-evaluation",
+    "head_ref": "test/recall-regression-gate",
+    "state_at_capture": "open",
+    "label": "benchmark-regression"
+  },
+  "workflow": {
+    "name": "Regression",
+    "run_id": 34222435194,
+    "run_url": "https://github.com/qyc060615/WeKnora/actions/runs/34222435194",
+    "conclusion": "failure",
+    "job_id": 102048492139,
+    "job_url": "https://github.com/qyc060615/WeKnora/actions/runs/34222435194/job/102048492139",
+    "job_name": "Benchmark quality regression gate",
+    "job_conclusion": "failure",
+    "benchmark_step": "success",
+    "comparison_step": "failure",
+    "upload_report_step": "success",
+    "annotation": "Process completed with exit code 1."
+  },
+  "artifact": {
+    "name": "regression-report",
+    "id": 10054474690,
+    "size_in_bytes": 906,
+    "expired": false,
+    "digest": "sha256:e155f5616d870322be36d3b55f40b41fa21c9fca9c3cdf38eabab779ad2d8a95",
+    "anonymous_download_result": "HTTP 401; raw archive not saved"
+  }
+}

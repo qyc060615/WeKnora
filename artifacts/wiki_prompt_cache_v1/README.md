@@ -1,11 +1,13 @@
-# Wiki Prompt Cache BEFORE/AFTER 对照实验
+# Wiki Prompt Cache Historical BEFORE/AFTER Evidence
 
 Repository: `qyc060615/WeKnora` · Branch: `feat/topic3-evaluation`
 实验日期: 2026-09-05
 
+> 本目录是历史 BEFORE / AFTER 局部实验证据，不是 Topic 3 最终结论。最终汇报口径以仓库根目录 `TOPIC3-README.md` 为准。
+
 ---
 
-## 1. Executive Result
+## 1. Historical Experiment Result
 
 **MODEST IMPROVEMENT**
 
@@ -144,7 +146,7 @@ Wall clock（orchestrator 观测，4 文档单 trial）：AFTER ≈ 7.5 min，BE
 
 ---
 
-## 10. Acceptance Mapping
+## 10. Historical Interpretation Scope
 
 **问题：Wiki 生成阶段缓存命中率的提升是否有真实证据？**
 

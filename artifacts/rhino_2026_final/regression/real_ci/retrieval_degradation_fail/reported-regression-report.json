@@ -1,0 +1,24 @@
+{
+  "evidence_type": "user_provided_ci_regression_report",
+  "overall_status": "FAIL",
+  "baseline_id": "evaluation_10000_1788770724740_d35f5c12_benchmarkv1",
+  "current_id": "evaluation_10000_1788868282872_495d0eb9_benchmarkv1",
+  "comparisons": [
+    {"display_name": "Precision", "baseline": 0.1390, "current": 0.0000, "delta": -0.1390, "allowed_drop": 0.0200, "status": "FAIL"},
+    {"display_name": "Recall", "baseline": 1.0000, "current": 0.0000, "delta": -1.0000, "allowed_drop": 0.0200, "status": "FAIL"},
+    {"display_name": "NDCG@3", "baseline": 1.0000, "current": 0.0000, "delta": -1.0000, "allowed_drop": 0.0200, "status": "FAIL"},
+    {"display_name": "NDCG@10", "baseline": 1.0000, "current": 0.0000, "delta": -1.0000, "allowed_drop": 0.0200, "status": "FAIL"},
+    {"display_name": "MRR", "baseline": 1.0000, "current": 0.0000, "delta": -1.0000, "allowed_drop": 0.0200, "status": "FAIL"},
+    {"display_name": "MAP", "baseline": 1.0000, "current": 0.0000, "delta": -1.0000, "allowed_drop": 0.0200, "status": "FAIL"},
+    {"display_name": "BLEU-1", "baseline": 0.1619, "current": 0.0843, "delta": -0.0776, "allowed_drop": 0.0300, "status": "FAIL"},
+    {"display_name": "BLEU-2", "baseline": 0.1358, "current": 0.0659, "delta": -0.0699, "allowed_drop": 0.0250, "status": "FAIL"},
+    {"display_name": "BLEU-4", "baseline": 0.0980, "current": 0.0445, "delta": -0.0536, "allowed_drop": 0.0200, "status": "FAIL"},
+    {"display_name": "ROUGE-1", "baseline": 0.2828, "current": 0.1188, "delta": -0.1639, "allowed_drop": 0.0350, "status": "FAIL"},
+    {"display_name": "ROUGE-2", "baseline": 0.1549, "current": 0.0449, "delta": -0.1100, "allowed_drop": 0.0200, "status": "FAIL"},
+    {"display_name": "ROUGE-L", "baseline": 0.2770, "current": 0.1097, "delta": -0.1673, "allowed_drop": 0.0350, "status": "FAIL"}
+  ],
+  "failed_metrics": ["Precision", "Recall", "NDCG@3", "NDCG@10", "MRR", "MAP", "BLEU-1", "BLEU-2", "BLEU-4", "ROUGE-1", "ROUGE-2", "ROUGE-L"],
+  "summary": "12 quality metrics exceeded allowed regression threshold",
+  "exit_status": 1,
+  "provenance_note": "Values transcribed from the complete Regression Report supplied by the user; this file is not represented as the anonymously unavailable GitHub Actions artifact."
+}

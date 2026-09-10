@@ -1,53 +1,35 @@
-# Historical Wiki Prompt Cache Before/After Audit
+# Historical Wiki Prompt Cache Before/After 审计
 
-## Evidence Identity
+## 1. Evidence identity
 
 - Before commit: `3f9a054ec94e92c3089a6574281aa09760068e38`
 - After commit: `22f9120216d554181db041b24e3e191363c34366`
 - Artifact commit: `e1ff86d02708ff7d3b98162bd0c63a4f44afdd8d`
-- Commit chronology: `3f9a054e` is the direct parent of `22f91202`; the artifact
-  commit is a descendant of `22f91202`.
+- Commit chronology: `3f9a054e` 是 `22f91202` 的直接父提交；artifact commit 是 `22f91202` 的后代
 - Tenant: `10000`
 - Chat model: `deepseek-v4-pro`
 - Model config ID: `5a50bf0a-60f9-4340-974b-0bd85c80b286`
-- Configured provider: `generic`; effective provider: DeepSeek; resolved model:
-  `deepseek-v4-pro`.
-- Workload: four Markdown files from `dataset/benchmark_sources/nebultech_v1`
-  (`security_policy`, `incident_response`, `database_policy`, `api_guidelines`).
-  Their current SHA-256 hashes match `experiment_config.json`.
-- Trial time bounds are not persisted in the JSON artifacts. Existing KB creation
-  timestamps identify the four sequential runs on 2026-09-05 UTC, and live
-  read-only DB slices reproduce the core per-purpose aggregates.
+- Configured provider: `generic`；effective provider: DeepSeek；resolved model: `deepseek-v4-pro`
+- Workload: `dataset/benchmark_sources/nebultech_v1` 中 4 个 Markdown files：`security_policy`、`incident_response`、`database_policy`、`api_guidelines`
 
-## Prompt Change
+4 个文件当前 SHA-256 与 `experiment_config.json` 一致。原 JSON artifacts 未持久化精确 trial time bounds；existing KB creation timestamps 可定位 2026-09-05 UTC 的 4 次顺序执行，read-only DB slices 可复现核心 per-purpose aggregates。
 
-`git diff 3f9a054e..22f91202` proves a real code/assembly before-after:
+## 2. Prompt change
 
-- Before: `WikiSummaryPrompt` and `WikiCandidateSlugPrompt` place dynamic document
-  content (and request-varying slugs) before the shared instruction block.
-- After: the stable instructions and assembled business instructions are placed
-  before the dynamic document/slugs, creating a reusable provider prefix.
-- The same commit also adds stable provider prompt-cache keys for PageModify and
-  stable image-placeholder ordering. The corpus is plain text, so the image change
-  is not exercised; DeepSeek automatic prefix caching does not directly use the
-  explicit application cache key. The `wiki_summary` result is therefore aligned
-  specifically with the prompt reordering.
+`git diff 3f9a054e..22f91202` 证明存在真实 code/assembly before-after：
 
-## Metric Definitions
+- Before：`WikiSummaryPrompt` 和 `WikiCandidateSlugPrompt` 将 dynamic document content 及 request-varying slugs 放在 shared instruction block 之前；
+- After：stable instructions 与 assembled business instructions 被放在 dynamic document/slugs 之前，形成可复用 provider prefix；
+- 同一 commit 还为 PageModify 增加 stable provider prompt-cache keys，并稳定 image-placeholder ordering。该 corpus 为 plain text，因此未覆盖 image change；DeepSeek automatic prefix caching 不直接使用 explicit application cache key。`wiki_summary` 结果只与 prompt reordering 对齐。
 
-Current Final Candidate definitions:
+## 3. Metric definitions
 
-- Prompt Cache Call Hit Rate = `hit_calls / (hit_calls + miss_calls)`.
-  Unsupported, unreported, NULL, timeout, and failed rows are excluded.
-- Prompt Token Cache Ratio = `SUM(cache_read_tokens) / SUM(input_tokens)` over
-  cache-accounted rows with observed input/read tokens. Missing values remain NULL.
+- Prompt Cache Call Hit Rate = `hit_calls / (hit_calls + miss_calls)`；unsupported、unreported、NULL、timeout、failed rows 排除。
+- Prompt Token Cache Ratio = `SUM(cache_read_tokens) / SUM(input_tokens)`，只统计 cache-accounted 且 input/read tokens 已观测的 rows；missing values 保持 NULL。
 
-The historical README/SQL labels the token formula as
-`cache_read / (cache_read + cache_miss)`. For these DeepSeek `wiki_summary` rows,
-`input_tokens = cache_read_tokens + cache_miss_tokens` exactly, so recomputing with
-the current formula changes no result. Original JSON files were not modified.
+Historical README/SQL 使用 `cache_read / (cache_read + cache_miss)`。这些 DeepSeek `wiki_summary` rows 满足 `input_tokens = cache_read_tokens + cache_miss_tokens`，因此按当前公式重算结果不变。原 JSON files 未修改。
 
-## Recomputed Results: wiki_summary
+## 4. `wiki_summary` 重算结果
 
 | Mode | Calls | Hit | Miss | Cache read | Input tokens | Call hit rate | Current token ratio |
 |---|---:|---:|---:|---:|---:|---:|---:|
@@ -58,57 +40,30 @@ the current formula changes no result. Original JSON files were not modified.
 | AFTER, pair 2 | 4 | 4 | 0 | 2,048 | 6,773 | 100% | 30.2377% |
 | **AFTER total** | **8** | **7** | **1** | **3,584** | **13,434** | **87.5%** | **26.6786%** |
 
-Thus the defensible historical result is limited to the summary layer:
-call-hit rate `0% -> 87.5%` and current-formula token-cache ratio
-`0% -> 26.6786%`.
+可辩护的 historical 结论仅限 summary layer：call-hit rate `0% → 87.5%`，current-formula token-cache ratio `0% → 26.6786%`。
 
-## Six-question audit
+## 5. 六项审计
 
-1. **Real old-vs-optimized prompt ordering: PASS.** Commit ancestry and source diff
-   establish the intended structure change. This is not merely a relabelled
-   cold/warm comparison.
-2. **Workload comparability: PASS for `wiki_summary`, confounded for all-Wiki totals.**
-   Corpus, four summary calls per trial, pipeline, markers within each pair, and model
-   are controlled. Generated pages differ (BEFORE 59, AFTER 49), causing PageModify
-   and all-Wiki call counts to differ; those absolute totals cannot support an
-   optimization claim.
-3. **Model comparability: PASS.** Both modes record the same model config, resolved
-   model, provider path, and tenant.
-4. **Metric semantics: PASS after explicit recomputation.** The current denominator
-   was applied. Equality with the old denominator is data-specific, not assumed.
-5. **Data provenance: PASS for the summary-layer claim, with limitations.** Artifacts
-   contain SQL and DB-derived aggregates, are committed, and the still-present DB
-   rows reproduce the 8-vs-8 summary counts/tokens. However, the JSON omits exact
-   timestamps/usage IDs, `raw_queries.sql` omits an explicit model filter, and some
-   `wiki_index_intro` totals show boundary carry-over; therefore the all-Wiki artifact
-   is not accepted as clean trial-isolated provenance.
-6. **Commit linkage: PASS.** Before/after commits and the precise stable-prefix move
-   are directly recoverable from Git, independently of the README narrative.
+1. **真实 old-vs-optimized prompt ordering：PASS。** Commit ancestry 与 source diff 建立真实结构变化，不是 relabelled cold/warm comparison。
+2. **Workload comparability：`wiki_summary` PASS；all-Wiki totals 有 confounder。** Corpus、每 trial 4 次 summary calls、pipeline、pair 内 markers 与 model 受控，但 generated pages 为 BEFORE 59、AFTER 49，PageModify 和 all-Wiki totals 不能支持优化结论。
+3. **Model comparability：PASS。** 两侧 model config、resolved model、provider path 和 tenant 相同。
+4. **Metric semantics：显式重算后 PASS。** 使用当前 denominator；与旧 denominator 相等是数据特性，不作为一般假设。
+5. **Data provenance：summary-layer claim PASS，但有限制。** Artifacts 包含 SQL 与 DB-derived aggregates，现存 DB rows 可复现 8-vs-8 counts/tokens；但 JSON 缺 timestamps/usage IDs，`raw_queries.sql` 缺 explicit model filter，部分 `wiki_index_intro` totals 有 boundary carry-over，因此 all-Wiki artifact 不作为 clean trial-isolated provenance。
+6. **Commit linkage：PASS。** Git 可直接恢复 before/after commits 和 precise stable-prefix move，不依赖 README narrative。
 
-## Confounders and limitations
+## 6. Confounders 与限制
 
-- The recorded plan calls itself `AB/BA`, but both actual pair sequences are
-  `AFTER then BEFORE`. It is not a balanced crossover.
-- DeepSeek's provider-native prefix cache cannot be cleared; pair 2 is warmed by
-  earlier requests. The order effect is conservative for pair 1 (AFTER ran first)
-  but still prevents a clean cold-state randomized causal estimate.
-- Only eight successful summary calls exist per mode; provider variance remains.
-- Different generated page counts confound PageModify/all-Wiki tokens, costs, and
-  latency. No overall Wiki improvement is claimed.
-- Exact per-trial timestamps and row IDs were not retained in the original JSON.
-- The four-document corpus is small and contains no images.
+- 记录方案称为 `AB/BA`，但两组实际 sequence 都是 `AFTER then BEFORE`，不是 balanced crossover。
+- DeepSeek provider-native prefix cache 无法清空；pair 2 受早期 request warm-up 影响，不能形成 clean cold-state randomized causal estimate。
+- 每个 mode 只有 8 个 successful summary calls，provider variance 仍存在。
+- Generated page counts 不同，使 PageModify/all-Wiki tokens、cost、latency 混杂；不声明 overall Wiki improvement。
+- 原 JSON 未保留 exact per-trial timestamps 与 row IDs。
+- 4-document corpus 较小且无图片。
 
-## Relationship to Final Candidate A/B
+## 7. 与 Final Candidate A/B 的关系
 
-The historical evidence answers directionality: moving shared summary instructions
-ahead of dynamic content changes `wiki_summary` from 0/8 hits to 7/8 hits. The Final
-Candidate A/B at `cd21908a` answers reproducibility of the resulting implementation:
-both independent arms show `wiki_summary` 4/4 hits with 2,048 cache-read tokens, and
-both show whole-Wiki eligible hit rate 57/59 (`0.966102`). The Final Candidate A/B is
-not another old/new comparison and must not be presented as one.
+Historical evidence 回答方向性：shared summary instructions 移到 dynamic content 前，使 `wiki_summary` 从 0/8 hits 变为 7/8 hits。Final Candidate A/B 回答实现结果的可复现性：两个独立 arm 均为 `wiki_summary` 4/4 hits、2,048 cache-read tokens，whole-Wiki eligible hit rate 均为 57/59（`0.966102`）。Final Candidate A/B 不是另一次 old/new comparison，不得这样表述。
 
-## Verdict
+## 8. Verdict
 
-**VALID WITH LIMITATIONS** for the layer-scoped historical claim that the optimized
-ordering improves `wiki_summary` provider-prefix reuse. It is not valid evidence that
-all Wiki stages, PageModify, overall latency, or total cost improved.
+对于“optimized ordering 改善 `wiki_summary` provider-prefix reuse”这一 layer-scoped historical claim，结论为 **VALID WITH LIMITATIONS**。它不能证明所有 Wiki stages、PageModify、overall latency 或 total cost 均得到改善。

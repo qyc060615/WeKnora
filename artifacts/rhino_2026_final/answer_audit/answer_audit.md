@@ -1,38 +1,25 @@
-# Answer-Level Human Correctness Audit
+# Answer-level 人工正确性审计
 
-- **Commit**: `cd21908a652d1330499986e191fbd704b7d9c13b`
+- Commit: `cd21908a652d1330499986e191fbd704b7d9c13b`
+- 状态：**HUMAN REVIEW**
 
-## Status: HUMAN REVIEW
+## 1. 结论
 
-Reason: generated answers and retrieved chunks were not persisted in aggregate
-`BenchmarkResult`, so the answer-level audit is not reconstructible. No data was
-fabricated.
+Aggregate `BenchmarkResult` 未持久化 generated answers 和 retrieved chunks，因此无法从现有证据重建 answer-level audit。本轮没有伪造缺失数据，也不声明“15/15 correct”。
 
-The Final Candidate benchmark artifacts store **aggregate** `BenchmarkResult` only.
-Neither the artifact files nor the persistence layer retain per-question generated
-answers or retrieved evidence:
+Final Candidate benchmark artifacts 只保存 aggregate `BenchmarkResult`：
 
-- `artifacts/rhino_2026_final/benchmark/run_*/result.json` top-level keys are
-  `metrics`, `usage`, `latency`, `reproducibility`, `models`, `runtime` — aggregate
-  summaries, no per-question answer/evidence.
-- The only evaluation table, `evaluation_runs`, exposes 30 aggregate columns
-  (precision, recall, ndcg_3/10, mrr, map, bleu_1/2/4, rouge_1/2/l, status, counts)
-  and **no** question/answer/evidence column.
+- `benchmark/run_*/result.json` 的 top-level keys 为 `metrics`、`usage`、`latency`、`reproducibility`、`models`、`runtime`，没有 per-question answer/evidence；
+- `evaluation_runs` 只提供 Precision、Recall、NDCG@3/10、MRR、MAP、BLEU-1/2/4、ROUGE-1/2/L、status 与 counts 等 aggregate columns，没有 question/answer/evidence column。
 
-Therefore: **answer-level human correctness audit cannot be reconstructed from the
-aggregate BenchmarkResult alone.** No per-question answer or retrieved evidence is
-being synthesized to fill this gap.
+因此，仅凭 aggregate `BenchmarkResult` 无法重建逐题人工正确性审计。
 
-`answers.json` still enumerates all 15 frozen questions, reference answers, and qrel
-documents from `benchmark_v1`. The unavailable generated-answer and retrieved-output
-fields are explicitly `null`/empty and every provisional verdict is
-`needs_human_review`.
+## 2. 可用材料
 
-## What this implies
+`answers.json` 列出 `benchmark_v1` 的全部 15 个冻结 questions、reference answers 和 qrel documents。不可用的 generated-answer 与 retrieved-output fields 均明确为 `null`/empty，每题 provisional verdict 为 `needs_human_review`。
 
-- No AI verdict of "15/15 correct" is asserted. Any correctness claim would require
-  per-question answers that are not persisted.
-- Final human confirmation is required and remains **the user's** to perform.
-- If a human audit is required, it must be run against a fresh benchmark execution
-  that explicitly persists per-question answers/evidence — out of scope for the
-  current frozen Final Candidate.
+## 3. 边界与后续
+
+- 任何 answer correctness 结论都需要当前未持久化的 per-question answers。
+- Final human confirmation 仍由人工完成。
+- 若必须重新执行 human audit，需要新的 benchmark execution 显式持久化 per-question answers/evidence；这超出当前冻结 Final Candidate 范围。

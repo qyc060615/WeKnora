@@ -1,11 +1,13 @@
-# Benchmark v1.1 Three-Run Variance Summary
+# Benchmark v1.1 三次运行方差摘要
 
-Commit: `cd21908a652d1330499986e191fbd704b7d9c13b`  
-Published Final Result: `run_1` (first complete successful Final Strict Run)  
-All runs: Strict, comparable, frozen dataset/runtime/model profile, Cache OFF.
+Commit: `cd21908a652d1330499986e191fbd704b7d9c13b`
+
+Published Final Result: `run_1`（first complete successful Final Strict Run）
+
+全部 run 均为 Strict、comparable，并使用 frozen dataset/runtime/model profile 与 Cache OFF。
 
 | Metric | Run 1 | Run 2 | Run 3 | Min | Max | Mean | Range |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+|---|---:|---:|---:|---:|---:|---:|---:|
 | Precision | 0.139003867 | 0.139003867 | 0.139003867 | 0.139003867 | 0.139003867 | 0.139003867 | 0.000000000 |
 | Recall | 1.000000000 | 1.000000000 | 1.000000000 | 1.000000000 | 1.000000000 | 1.000000000 | 0.000000000 |
 | NDCG@3 | 1.000000000 | 1.000000000 | 1.000000000 | 1.000000000 | 1.000000000 | 1.000000000 | 0.000000000 |
@@ -19,6 +21,6 @@ All runs: Strict, comparable, frozen dataset/runtime/model profile, Cache OFF.
 | ROUGE-2 | 0.154857479 | 0.172751379 | 0.139054968 | 0.139054968 | 0.172751379 | 0.155554608 | 0.033696411 |
 | ROUGE-L | 0.277034096 | 0.291294593 | 0.250074504 | 0.250074504 | 0.291294593 | 0.272801064 | 0.041220089 |
 
-## Interpretation
+## 解释
 
-The retrieval layer is identical across all three runs. BLEU and ROUGE vary under the same frozen hosted-generation configuration. This supports an observed generation-side variance statement, but does not by itself prove that provider randomness is the cause.
+3 次 run 的 Retrieval layer 结果一致。BLEU 与 ROUGE 在相同 frozen hosted-generation configuration 下存在波动。这支持“观测到 generation-side variance”的结论，但不能单独证明 provider randomness 是其原因。
